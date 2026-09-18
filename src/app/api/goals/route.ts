@@ -34,12 +34,38 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
     const body = await req.json();
-    const { goal_type, custom_deficit_pct, notes, updated_weight_kg } = body;
+    const {
+      goal_type,
+      custom_deficit_pct,
+      notes,
+      updated_weight_kg,
+      macro_preference,
+      neat_level,
+      training_sessions_per_week,
+      daily_steps_target,
+    } = body;
 
-    // Si se actualizó el peso actual, actualizarlo en el perfil
+    // Si se actualizó el peso o actividad, actualizarlo en el perfil
+    const profileUpdates: Record<string, unknown> = {};
     if (updated_weight_kg && Number(updated_weight_kg) > 0) {
       user.current_weight_kg = Number(updated_weight_kg);
-      await updateRow('profiles', user.id, { current_weight_kg: user.current_weight_kg });
+      profileUpdates.current_weight_kg = user.current_weight_kg;
+    }
+    if (neat_level) {
+      user.neat_level = neat_level;
+      profileUpdates.neat_level = neat_level;
+    }
+    if (training_sessions_per_week !== undefined) {
+      user.training_sessions_per_week = Number(training_sessions_per_week);
+      profileUpdates.training_sessions_per_week = user.training_sessions_per_week;
+    }
+    if (daily_steps_target !== undefined) {
+      user.daily_steps_target = Number(daily_steps_target);
+      profileUpdates.daily_steps_target = user.daily_steps_target;
+    }
+
+    if (Object.keys(profileUpdates).length > 0) {
+      await updateRow('profiles', user.id, profileUpdates);
     }
 
     const weight = user.current_weight_kg || 70;
@@ -58,7 +84,17 @@ export async function POST(req: Request) {
     }
 
     const macros = calculateGoalMacros(
-      { age, gender, height_cm: height, weight_kg: weight, activity_level },
+      {
+        age,
+        gender,
+        height_cm: height,
+        weight_kg: weight,
+        activity_level,
+        neat_level: user.neat_level || neat_level,
+        training_sessions_per_week: user.training_sessions_per_week ?? training_sessions_per_week,
+        daily_steps: user.daily_steps_target ?? daily_steps_target,
+        macro_preference: macro_preference || 'balanced',
+      },
       goal_type as GoalType,
       custom_deficit_pct !== undefined ? Number(custom_deficit_pct) : undefined
     );
@@ -80,7 +116,11 @@ export async function POST(req: Request) {
       water_target_ml: macros.water_target_ml,
       initial_weight_kg: weight,
       is_active: true,
-      notes: notes || `Meta configurada a partir de peso actual ${weight} kg`,
+      macro_preference: macros.macro_preference,
+      target_rate_pct_per_week: macros.target_rate_pct_per_week,
+      evaluation_period_weeks: macros.suggested_duration_weeks,
+      re_evaluation_criteria: macros.reEvaluationCriteria,
+      notes: notes || `Meta configurada con déficit/superávit ${(macros.deficit_surplus_pct * 100).toFixed(0)}% (${macros.macro_preference})`,
       created_at: new Date().toISOString(),
     };
 

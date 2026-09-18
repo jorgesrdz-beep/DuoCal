@@ -48,6 +48,9 @@ export interface Profile {
   height_cm: number | null;
   current_weight_kg: number | null;
   activity_level: ActivityLevel | null;
+  neat_level?: 'sedentary' | 'light_standing' | 'active_walking' | 'heavy_labor' | null;
+  training_sessions_per_week?: number | null;
+  daily_steps_target?: number | null;
   share_photos_with_partner: boolean;
   webhook_token: string;
   failed_login_attempts: number;
@@ -73,6 +76,10 @@ export interface Goal {
   water_target_ml?: number;
   initial_weight_kg: number;
   is_active: boolean;
+  macro_preference?: 'balanced' | 'high_carb' | 'higher_fat';
+  target_rate_pct_per_week?: number;
+  evaluation_period_weeks?: number;
+  re_evaluation_criteria?: string;
   notes: string | null;
   created_at: string;
 }

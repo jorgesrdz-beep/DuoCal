@@ -425,7 +425,7 @@ export default function DailyDiary() {
               </span>
             </div>
             <span className="text-[10px] text-zinc-400 block mb-1.5">
-              Llevas {totals.fiber_g || 0}g de {targetFiber}g recomendados
+              Llevas {totals.fiber_g || 0}g (Rango óptimo: 30–35g)
             </span>
             <div className="w-full bg-teal-100 dark:bg-teal-900/40 h-2 rounded-full overflow-hidden mb-1">
               <div
@@ -453,7 +453,7 @@ export default function DailyDiary() {
                 </span>
               </div>
               <span className="text-[10px] text-zinc-400 block mb-1.5">
-                Llevas {waterIntake} de {targetWater} ml ({Math.round((waterIntake / targetWater) * 100)}%)
+                Basal {targetWater} ml (+500ml si entrenas)
               </span>
             </div>
 
