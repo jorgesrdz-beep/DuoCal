@@ -3,7 +3,8 @@ import { getDb, insertRow, updateRow } from '@/lib/store/mockDb';
 import { cookies } from 'next/headers';
 import { calculateGoalMacros } from '@/lib/tdee';
 import crypto from 'crypto';
-import { GoalType } from '@/types/database';
+import { GoalType, ActivityLevel } from '@/types/database';
+import { getLocalDateString } from '@/lib/utils';
 
 export async function GET() {
   try {
@@ -53,16 +54,26 @@ export async function POST(req: Request) {
     }
     if (neat_level) {
       user.neat_level = neat_level;
-      profileUpdates.neat_level = neat_level;
     }
     if (training_sessions_per_week !== undefined) {
       user.training_sessions_per_week = Number(training_sessions_per_week);
-      profileUpdates.training_sessions_per_week = user.training_sessions_per_week;
     }
     if (daily_steps_target !== undefined) {
       user.daily_steps_target = Number(daily_steps_target);
-      profileUpdates.daily_steps_target = user.daily_steps_target;
     }
+
+    // Mapear a columna existente activity_level en Supabase
+    const sessions = user.training_sessions_per_week ?? 3;
+    const neat = user.neat_level || neat_level || 'sedentary';
+    let derivedActivity: ActivityLevel = 'moderate';
+    if (neat === 'sedentary' && sessions <= 2) derivedActivity = 'sedentary';
+    else if (neat === 'sedentary' && sessions <= 4) derivedActivity = 'light';
+    else if (neat === 'light_standing' || sessions <= 4) derivedActivity = 'moderate';
+    else if (neat === 'active_walking' || sessions >= 5) derivedActivity = 'very_active';
+    else if (neat === 'heavy_labor') derivedActivity = 'extra_active';
+
+    user.activity_level = derivedActivity;
+    profileUpdates.activity_level = derivedActivity;
 
     if (Object.keys(profileUpdates).length > 0) {
       await updateRow('profiles', user.id, profileUpdates);
@@ -78,7 +89,7 @@ export async function POST(req: Request) {
     for (const g of db.goals) {
       if (g.user_id === userId && g.is_active) {
         g.is_active = false;
-        g.end_date = new Date().toISOString().split('T')[0];
+        g.end_date = getLocalDateString();
         await updateRow('goals', g.id, { is_active: false, end_date: g.end_date });
       }
     }
@@ -103,7 +114,7 @@ export async function POST(req: Request) {
       id: crypto.randomUUID(),
       user_id: userId,
       goal_type: goal_type as GoalType,
-      start_date: new Date().toISOString().split('T')[0],
+      start_date: getLocalDateString(),
       end_date: null,
       suggested_duration_weeks: macros.suggested_duration_weeks,
       tdee_calculated: macros.tdee,

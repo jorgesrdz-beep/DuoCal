@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/store/mockDb';
+import { getLocalDateString, shiftDateDays } from '@/lib/utils';
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const range = searchParams.get('range') || 'weekly'; // 'weekly' (last 7 days), 'monthly' (last 30 days)
+    const clientDate = searchParams.get('date') || getLocalDateString();
 
     const cookieStore = await cookies();
     const userId = cookieStore.get('duocal_session')?.value;
@@ -16,14 +18,11 @@ export async function GET(req: Request) {
     if (!user) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
 
     const daysCount = range === 'monthly' ? 30 : 7;
-    const today = new Date();
 
-    // Generar lista de días
+    // Generar lista de días usando fecha local real
     const dates: string[] = [];
     for (let i = daysCount - 1; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      dates.push(d.toISOString().split('T')[0]);
+      dates.push(shiftDateDays(clientDate, -i));
     }
 
     const activeGoal = db.goals.find((g) => g.user_id === userId && g.is_active);

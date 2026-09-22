@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { Flame, Activity, TrendingUp, Users, Calendar, ArrowUpRight, ArrowDownRight, CheckCircle2 } from 'lucide-react';
+import { getLocalDateString } from '@/lib/utils';
 import {
   ResponsiveContainer,
   BarChart,
@@ -21,7 +22,8 @@ export default function WeeklyBalanceCard() {
 
   const fetchReport = async () => {
     try {
-      const res = await fetch(`/api/reports?range=${range}`);
+      const localDate = getLocalDateString();
+      const res = await fetch(`/api/reports?range=${range}&date=${localDate}`);
       if (res.ok) {
         const data = await res.json();
         setReportData(data);
@@ -35,6 +37,9 @@ export default function WeeklyBalanceCard() {
 
   useEffect(() => {
     fetchReport();
+    const handleTz = () => fetchReport();
+    window.addEventListener('duo_calories_timezone_changed', handleTz);
+    return () => window.removeEventListener('duo_calories_timezone_changed', handleTz);
   }, [range]);
 
   if (loading) {
@@ -73,13 +78,13 @@ export default function WeeklyBalanceCard() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className={todayBalance.partner ? "grid grid-cols-1 md:grid-cols-2 gap-3" : "w-full"}>
             {/* Mi Balance Diario */}
             <div className="p-4 bg-zinc-50 dark:bg-zinc-800/60 rounded-2xl border border-zinc-200/70 dark:border-zinc-700/60 space-y-3">
               <div className="flex items-baseline justify-between">
                 <div>
                   <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
-                    Tú ({user?.display_name})
+                    {todayBalance.partner ? `Tú (${user?.display_name})` : 'Tu Consumo de Hoy'}
                   </span>
                   <div className="flex items-baseline gap-1 mt-0.5">
                     <span className="text-xl font-black text-zinc-900 dark:text-white">
@@ -141,8 +146,8 @@ export default function WeeklyBalanceCard() {
               </div>
             </div>
 
-            {/* Balance de Compañero/a (Roomie / Duo) Hoy */}
-            {todayBalance.partner ? (
+            {/* Balance de Compañero/a (Roomie / Duo) Hoy - Solo si está vinculado */}
+            {todayBalance.partner && (
               <div className="p-4 bg-teal-50/40 dark:bg-zinc-800/60 rounded-2xl border border-teal-200/50 dark:border-zinc-700/60 flex flex-col justify-between space-y-3">
                 <div className="flex items-baseline justify-between">
                   <div>
@@ -181,11 +186,6 @@ export default function WeeklyBalanceCard() {
                     Meal Prep Compartido 🍱
                   </span>
                 </div>
-              </div>
-            ) : (
-              <div className="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 flex flex-col items-center justify-center text-center text-xs text-zinc-400">
-                <Users className="w-6 h-6 mb-1 opacity-40" />
-                <span>Vincula a tu compañero/a o roomie para ver su balance calórico diario aquí.</span>
               </div>
             )}
           </div>
@@ -290,9 +290,24 @@ export default function WeeklyBalanceCard() {
 
         <div className="h-48 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={dailyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <BarChart data={dailyData} margin={{ top: 10, right: 15, left: 5, bottom: 0 }}>
               <XAxis dataKey="dayLabel" stroke="#888888" fontSize={11} tickLine={false} />
-              <YAxis stroke="#888888" fontSize={11} tickLine={false} />
+              <YAxis
+                stroke="#888888"
+                fontSize={11}
+                tickLine={false}
+                width={45}
+                allowDecimals={false}
+                domain={[
+                  0,
+                  (dataMax: number) => {
+                    const target = Number(weeklySummary?.targetCalories) || 2000;
+                    const maxVal = Math.max(dataMax * 1.15, target * 1.15, 2000);
+                    return Math.ceil(maxVal / 250) * 250;
+                  },
+                ]}
+                tickFormatter={(val: number) => `${Math.round(val)}`}
+              />
               <Tooltip
                 contentStyle={{
                   backgroundColor: '#18181b',
@@ -313,6 +328,12 @@ export default function WeeklyBalanceCard() {
             </BarChart>
           </ResponsiveContainer>
         </div>
+
+        {dailyData.every((d: { calories?: number }) => (d.calories || 0) === 0) && (
+          <div className="mt-3 p-2.5 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl border border-zinc-200/60 dark:border-zinc-700/60 text-center text-xs text-zinc-400">
+            Aún no has registrado alimentos consumidos en estos días. Registra tus comidas completas en tu Diario para visualizar tu comparativa frente a la meta diaria.
+          </div>
+        )}
       </div>
 
       {/* 3. Panel de Balance Real: Consumo vs Gasto Apple Watch */}

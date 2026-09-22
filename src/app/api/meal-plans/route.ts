@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDb, insertRow, deleteRow } from '@/lib/store/mockDb';
+import { getDb, insertRow, updateRow, deleteRow } from '@/lib/store/mockDb';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 import { getWeekStartDate } from '@/lib/utils';
@@ -51,14 +51,62 @@ export async function POST(req: Request) {
 
     const db = await getDb();
 
+    const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    const validFoodId =
+      food_id && typeof food_id === 'string' && isUuid(food_id) && db.foods.some((f) => f.id === food_id)
+        ? food_id
+        : null;
+
+    const targetWeek = week_start_date || getWeekStartDate();
+    const cleanName = custom_name.trim();
+
+    // Evitar duplicados idénticos en la misma comida del mismo día
+    const existing = db.meal_plans.find(
+      (p) =>
+        p.user_id === userId &&
+        p.week_start_date === targetWeek &&
+        p.day_of_week === Number(day_of_week) &&
+        p.meal_type === meal_type &&
+        p.custom_name.trim().toLowerCase() === cleanName.toLowerCase()
+    );
+
+    if (existing) {
+      const newServings = Number(existing.servings || 1) + (Number(servings) || 1);
+      const factor = newServings / (Number(existing.servings) || 1);
+      const updatedCalories = Math.round(Number(existing.calories) * factor);
+      const updatedProtein = Number((Number(existing.protein_g) * factor).toFixed(1));
+      const updatedCarbs = Number((Number(existing.carbs_g) * factor).toFixed(1));
+      const updatedFat = Number((Number(existing.fat_g) * factor).toFixed(1));
+
+      await updateRow('meal_plans', existing.id, {
+        servings: newServings,
+        calories: updatedCalories,
+        protein_g: updatedProtein,
+        carbs_g: updatedCarbs,
+        fat_g: updatedFat,
+      });
+
+      return NextResponse.json({
+        success: true,
+        item: {
+          ...existing,
+          servings: newServings,
+          calories: updatedCalories,
+          protein_g: updatedProtein,
+          carbs_g: updatedCarbs,
+          fat_g: updatedFat,
+        },
+      });
+    }
+
     const newItem = {
       id: crypto.randomUUID(),
       user_id: userId,
-      week_start_date: week_start_date || getWeekStartDate(),
+      week_start_date: targetWeek,
       day_of_week: Number(day_of_week),
       meal_type,
-      food_id: food_id || null,
-      custom_name: custom_name.trim(),
+      food_id: validFoodId,
+      custom_name: cleanName,
       servings: Number(servings) || 1,
       calories: Math.round(Number(calories)),
       protein_g: Number(Number(protein_g || 0).toFixed(1)),

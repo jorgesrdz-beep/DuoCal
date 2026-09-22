@@ -17,7 +17,7 @@ export const STARTER_RECIPES: Dish[] = [
     prep_time_minutes: 5,
     cook_time_minutes: 8,
     instructions: [
-      'Bate 2 huevos enteros y 1 clara en un tazón con una pizca de sal y pimienta.',
+      'Bate 2 huevos enteros y 1 clara (35 ml / 2 cdas soperas si usas claras líquidas de bote) en un tazón con una pizca de sal y pimienta.',
       'En un sartén antiadherente a fuego medio con unas gotas de aceite, saltea las hojas de espinaca 1 minuto hasta que reduzcan.',
       'Vierte los huevos batidos cubriendo toda la superficie del sartén.',
       'Cuando la base esté firme, agrega la pechuga de pavo picada y el queso panela en cubos en una mitad.',
@@ -52,7 +52,7 @@ export const STARTER_RECIPES: Dish[] = [
         id: 'si-1-2',
         dish_id: 'starter-1',
         food_id: null,
-        ingredient_name: 'Clara de huevo',
+        ingredient_name: 'Clara de huevo (1 clara / 35 ml / 2 cdas)',
         amount_g: 35,
         calories: 17,
         protein_g: 3.6,

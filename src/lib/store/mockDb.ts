@@ -1,5 +1,6 @@
 import { Profile, Household, Goal, Food, MealPlanItem, FoodLog, HealthMetric, ShoppingListItem, PhotoComparison, Dish, DishIngredient, ConsumptionSchedule } from '@/types/database';
 import { hashPin } from '@/lib/auth/pin';
+import { WHOLE_FOODS } from '@/lib/data/wholeFoods';
 
 export interface InMemoryDB {
   households: Household[];
@@ -52,17 +53,34 @@ export async function getDb(): Promise<InMemoryDB> {
         supabaseAdmin.from('consumption_schedules').select('*'),
       ]);
 
+      const mergedFoods: Food[] = [...WHOLE_FOODS];
+      if (foods && Array.isArray(foods)) {
+        for (const f of foods) {
+          const idx = mergedFoods.findIndex((wf) => wf.id === f.id || wf.name.toLowerCase().trim() === f.name.toLowerCase().trim());
+          if (idx !== -1) {
+            mergedFoods[idx] = f;
+          } else {
+            mergedFoods.push(f);
+          }
+        }
+      }
+
+      const hydratedDishes = (dishes || []).map((d) => ({
+        ...d,
+        ingredients: (dish_ingredients || []).filter((di) => di.dish_id === d.id),
+      }));
+
       return {
         households: households || [],
         profiles: profiles || [],
         goals: goals || [],
-        foods: foods && foods.length > 0 ? foods : (globalForDb.duoCalDb?.foods || []),
+        foods: mergedFoods,
         meal_plans: meal_plans || [],
         food_logs: food_logs || [],
         health_metrics: health_metrics || [],
         shopping_list_items: shopping_list_items || [],
         photo_comparisons: photo_comparisons || [],
-        dishes: dishes || [],
+        dishes: hydratedDishes,
         dish_ingredients: dish_ingredients || [],
         consumption_schedules: consumption_schedules || [],
       };
@@ -302,15 +320,75 @@ export function generateUUID(): string {
   });
 }
 
+const SUPABASE_ALLOWED_COLUMNS: Record<string, string[]> = {
+  profiles: [
+    'id', 'household_id', 'username', 'pin_hash', 'display_name', 'age', 'gender',
+    'height_cm', 'current_weight_kg', 'activity_level', 'share_photos_with_partner',
+    'webhook_token', 'failed_login_attempts', 'locked_until', 'session_token', 'created_at', 'updated_at'
+  ],
+  goals: [
+    'id', 'user_id', 'goal_type', 'start_date', 'end_date', 'suggested_duration_weeks',
+    'tdee_calculated', 'calorie_target', 'deficit_surplus_pct', 'protein_target_g',
+    'carbs_target_g', 'fat_target_g', 'fiber_target_g', 'water_target_ml',
+    'initial_weight_kg', 'is_active', 'notes', 'created_at'
+  ],
+  foods: [
+    'id', 'user_id', 'name', 'brand', 'serving_size_g', 'serving_unit',
+    'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'source', 'barcode',
+    'is_verified', 'created_at'
+  ],
+  dishes: [
+    'id', 'user_id', 'household_id', 'name', 'description', 'category',
+    'total_servings', 'total_weight_g', 'serving_name', 'is_shared_with_partner',
+    'total_calories', 'total_protein_g', 'total_carbs_g', 'total_fat_g', 'total_fiber_g',
+    'calories_per_serving', 'protein_per_serving', 'carbs_per_serving', 'fat_per_serving', 'fiber_per_serving',
+    'prep_time_minutes', 'cook_time_minutes', 'instructions', 'is_starter_template', 'created_at'
+  ],
+  dish_ingredients: [
+    'id', 'dish_id', 'food_id', 'ingredient_name', 'amount_g', 'calories',
+    'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'sodium_mg', 'aisle_category', 'created_at'
+  ],
+  meal_plans: [
+    'id', 'user_id', 'week_start_date', 'day_of_week', 'meal_type', 'food_id',
+    'custom_name', 'servings', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'created_at'
+  ],
+  food_logs: [
+    'id', 'user_id', 'date', 'meal_type', 'food_id', 'food_name',
+    'amount_g', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'created_at'
+  ],
+  shopping_list_items: [
+    'id', 'household_id', 'week_start_date', 'item_name', 'quantity_text', 'category', 'is_purchased', 'created_at'
+  ],
+};
+
+function filterForSupabase(table: string, obj: any): any {
+  const allowed = SUPABASE_ALLOWED_COLUMNS[table];
+  if (!allowed) return obj;
+  const filtered: Record<string, any> = {};
+  for (const key of allowed) {
+    if (key in obj && obj[key] !== undefined) {
+      filtered[key] = obj[key];
+    }
+  }
+  return filtered;
+}
+
 export async function insertRow(table: string, row: any): Promise<void> {
   const db = await getDb();
   if ((db as any)[table]) {
-    (db as any)[table].unshift(row);
+    const list = (db as any)[table];
+    const existingIdx = list.findIndex((x: any) => x.id === row.id);
+    if (existingIdx !== -1) {
+      list[existingIdx] = row;
+    } else {
+      list.unshift(row);
+    }
   }
   if (isServiceRoleConfigured) {
-    const { error } = await supabaseAdmin.from(table).insert(row);
+    const payload = filterForSupabase(table, row);
+    const { error } = await supabaseAdmin.from(table).upsert(payload);
     if (error) {
-      console.error(`Error inserting into Supabase ${table}:`, error);
+      console.error(`Error upserting into Supabase ${table}:`, error);
       throw new Error(`Error al persistir en Supabase (${table}): ${error.message}`);
     }
   }
@@ -326,10 +404,23 @@ export async function updateRow(table: string, id: string, updates: any): Promis
     }
   }
   if (isServiceRoleConfigured) {
-    const { error } = await supabaseAdmin.from(table).update(updates).eq('id', id);
-    if (error) {
-      console.error(`Error updating in Supabase ${table}:`, error);
-      throw new Error(`Error al actualizar en Supabase (${table}): ${error.message}`);
+    const payload = filterForSupabase(table, updates);
+    if (Object.keys(payload).length > 0) {
+      const { error } = await supabaseAdmin.from(table).update(payload).eq('id', id);
+      if (error) {
+        if (error.message && error.message.includes('fiber_g')) {
+          const fallback = { ...payload };
+          delete fallback.fiber_g;
+          const { error: err2 } = await supabaseAdmin.from(table).update(fallback).eq('id', id);
+          if (err2) {
+            console.error(`Error updating in Supabase ${table}:`, err2);
+            throw new Error(`Error al actualizar en Supabase (${table}): ${err2.message}`);
+          }
+        } else {
+          console.error(`Error updating in Supabase ${table}:`, error);
+          throw new Error(`Error al actualizar en Supabase (${table}): ${error.message}`);
+        }
+      }
     }
   }
 }

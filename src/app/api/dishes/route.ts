@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDb, insertRow } from '@/lib/store/mockDb';
+import { isServiceRoleConfigured, supabaseAdmin } from '@/lib/supabase/admin';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 import { Dish, DishIngredient } from '@/types/database';
@@ -57,6 +58,9 @@ export async function POST(req: Request) {
       total_servings = 1,
       serving_name = 'porción',
       is_shared_with_partner = true,
+      prep_time_minutes = 10,
+      cook_time_minutes = 15,
+      instructions,
       ingredients = [], // Array de { food_id, ingredient_name, amount_g, calories, protein_g, carbs_g, fat_g, fiber_g, sodium_mg }
     } = body;
 
@@ -73,6 +77,28 @@ export async function POST(req: Request) {
 
     const dishId = crypto.randomUUID();
     const servings = Math.max(0.5, Number(total_servings) || 1);
+
+    // Validar food_id contra base de datos si Supabase está activo
+    const supabase = isServiceRoleConfigured ? supabaseAdmin : null;
+    const validFoodIds = new Set<string>();
+    if (supabase) {
+      const candidateIds = ingredients
+        .map((i: any) => i.food_id)
+        .filter((id: any) => typeof id === 'string' && id.length > 0);
+      if (candidateIds.length > 0) {
+        try {
+          const { data: foundFoods } = await supabase
+            .from('foods')
+            .select('id')
+            .in('id', candidateIds);
+          if (foundFoods) {
+            foundFoods.forEach((f: any) => validFoodIds.add(f.id));
+          }
+        } catch {
+          // Mantener Set vacío si falla consulta
+        }
+      }
+    }
 
     // Sumar ingredientes
     let totalCals = 0;
@@ -100,10 +126,14 @@ export async function POST(req: Request) {
       totalFiber += fiber;
       totalWeight += weight;
 
+      // Si food_id no existe en la tabla foods, usar null para evitar error de clave foránea
+      const safeFoodId =
+        ing.food_id && (validFoodIds.has(ing.food_id) || !supabase) ? ing.food_id : null;
+
       const ingRecord: DishIngredient = {
         id: crypto.randomUUID(),
         dish_id: dishId,
-        food_id: ing.food_id || null,
+        food_id: safeFoodId,
         ingredient_name: ing.ingredient_name.trim(),
         amount_g: weight,
         calories: cals,
@@ -116,7 +146,6 @@ export async function POST(req: Request) {
       };
 
       processedIngredients.push(ingRecord);
-      await insertRow('dish_ingredients', ingRecord);
     }
 
     const newDish: Dish = {
@@ -130,6 +159,9 @@ export async function POST(req: Request) {
       total_weight_g: totalWeight,
       serving_name: serving_name || 'porción',
       is_shared_with_partner: Boolean(is_shared_with_partner),
+      prep_time_minutes: Number(prep_time_minutes) || 10,
+      cook_time_minutes: Number(cook_time_minutes) || 15,
+      instructions: Array.isArray(instructions) ? instructions : undefined,
       total_calories: totalCals,
       total_protein_g: Number(totalProt.toFixed(1)),
       total_carbs_g: Number(totalCarbs.toFixed(1)),
@@ -143,7 +175,13 @@ export async function POST(req: Request) {
       created_at: new Date().toISOString(),
     };
 
+    // 1. Insertar primero el platillo en la tabla dishes
     await insertRow('dishes', newDish);
+
+    // 2. Insertar los ingredientes asociados ahora que existe el platillo
+    for (const ingRecord of processedIngredients) {
+      await insertRow('dish_ingredients', ingRecord);
+    }
 
     return NextResponse.json({
       success: true,

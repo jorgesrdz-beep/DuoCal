@@ -1,16 +1,135 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Plus, Trash2, Search, Camera, ChevronLeft, ChevronRight, Check, Sparkles, X, Droplets, Barcode } from 'lucide-react';
-import { MealType, Food } from '@/types/database';
+import { Plus, Trash2, Pencil, Search, ChevronLeft, ChevronRight, Check, X, Droplets, Calendar, ChefHat, CheckCheck, Utensils, Sparkles, Loader2, AlertCircle } from 'lucide-react';
+import { MealType, Food, Dish } from '@/types/database';
 import FrequentFoodsBar from '@/components/diary/FrequentFoodsBar';
-import BarcodeScannerModal from '@/components/scanner/BarcodeScannerModal';
+import RecipeDetailModal from '@/components/dishes/RecipeDetailModal';
+import { STARTER_RECIPES } from '@/lib/data/starterRecipes';
+import { calculateFuzzyScore } from '@/lib/utils/fuzzySearch';
+import { getLocalDateString, shiftDateDays, formatDateToYYYYMMDD } from '@/lib/utils';
+
+const DAY_NAMES_ES: Record<number, string> = {
+  1: 'Lunes',
+  2: 'Martes',
+  3: 'Miércoles',
+  4: 'Jueves',
+  5: 'Viernes',
+  6: 'Sábado',
+  7: 'Domingo',
+};
+
+export function getFoodUnitInfo(food: Food) {
+  const name = (food.name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const rawUnit = (food.serving_unit || '').toLowerCase().trim();
+
+  // Si tiene unidad definida como rebanada, pieza, rebanadas, etc.
+  if (rawUnit && rawUnit !== 'g' && rawUnit !== 'gramo' && rawUnit !== 'gramos' && rawUnit !== 'ml') {
+    const isRebanada = rawUnit.includes('rebanada');
+    const isTortilla = rawUnit.includes('tortilla');
+    const isHuevo = rawUnit.includes('huevo') || rawUnit.includes('pieza') || rawUnit.includes('pza');
+    const singular = isRebanada ? 'rebanada' : (isTortilla ? 'tortilla' : (isHuevo ? 'pieza' : rawUnit));
+    const plural = isRebanada ? 'rebanadas' : (isTortilla ? 'tortillas' : (isHuevo ? 'piezas' : `${singular}s`));
+    const unitGrams = food.serving_size_g || 30;
+
+    return {
+      isPieceBased: true,
+      unitName: singular,
+      pluralUnitName: plural,
+      unitGrams,
+      options: [
+        { label: `1 ${singular}`, grams: unitGrams },
+        { label: `2 ${plural}`, grams: unitGrams * 2 },
+        { label: `3 ${plural}`, grams: unitGrams * 3 },
+        { label: `4 ${plural}`, grams: unitGrams * 4 },
+      ],
+    };
+  }
+
+  // Si por nombre es pan de caja, rebanada, bolillo
+  if (name.includes('pan') || name.includes('rebanada') || name.includes('tostada') || name.includes('tortilla')) {
+    const isTostada = name.includes('tostada');
+    const isTortilla = name.includes('tortilla');
+    const isBolillo = name.includes('bolillo') || name.includes('telera');
+
+    let singular = 'rebanada';
+    let plural = 'rebanadas';
+    let unitGrams = 30;
+
+    if (isTostada) {
+      singular = 'tostada';
+      plural = 'tostadas';
+      unitGrams = 12;
+    } else if (isTortilla) {
+      singular = 'tortilla';
+      plural = 'tortillas';
+      unitGrams = 25;
+    } else if (isBolillo) {
+      singular = 'pieza';
+      plural = 'piezas';
+      unitGrams = 60;
+    }
+
+    return {
+      isPieceBased: true,
+      unitName: singular,
+      pluralUnitName: plural,
+      unitGrams,
+      options: [
+        { label: `1 ${singular}`, grams: unitGrams },
+        { label: `2 ${plural}`, grams: unitGrams * 2 },
+        { label: `3 ${plural}`, grams: unitGrams * 3 },
+        { label: `4 ${plural}`, grams: unitGrams * 4 },
+      ],
+    };
+  }
+
+  // Si por nombre es huevo
+  if (name.includes('huevo')) {
+    const unitGrams = 50;
+    return {
+      isPieceBased: true,
+      unitName: 'pieza',
+      pluralUnitName: 'piezas',
+      unitGrams,
+      options: [
+        { label: '1 pza', grams: unitGrams },
+        { label: '2 pzas', grams: unitGrams * 2 },
+        { label: '3 pzas', grams: unitGrams * 3 },
+        { label: '4 pzas', grams: unitGrams * 4 },
+      ],
+    };
+  }
+
+  // Alimento por peso en gramos (carnes, quesos, cereales, etc.)
+  const baseG = food.serving_size_g || 100;
+  return {
+    isPieceBased: false,
+    unitName: 'g',
+    pluralUnitName: 'g',
+    unitGrams: baseG,
+    options: [
+      { label: `${Math.round(baseG * 0.5)}g`, grams: Math.round(baseG * 0.5) },
+      { label: `${baseG}g`, grams: baseG },
+      { label: `${Math.round(baseG * 1.5)}g`, grams: Math.round(baseG * 1.5) },
+      { label: `${Math.round(baseG * 2)}g`, grams: Math.round(baseG * 2) },
+    ],
+  };
+}
 
 export default function DailyDiary() {
   const { activeGoal } = useAuth();
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => getLocalDateString());
   const [logs, setLogs] = useState<any[]>([]);
+
+  useEffect(() => {
+    const handleTzChange = () => {
+      setSelectedDate(getLocalDateString());
+    };
+    window.addEventListener('duo_calories_timezone_changed', handleTzChange);
+    return () => window.removeEventListener('duo_calories_timezone_changed', handleTzChange);
+  }, []);
   const [totals, setTotals] = useState({ calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0 });
   const [waterIntake, setWaterIntake] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -25,20 +144,80 @@ export default function DailyDiary() {
   // Alimento seleccionado para registrar
   const [selectedFood, setSelectedFood] = useState<Food | null>(null);
   const [amountGrams, setAmountGrams] = useState(100);
+  const [isSavingFoodLog, setIsSavingFoodLog] = useState(false);
+  const [saveLogError, setSaveLogError] = useState<string | null>(null);
 
-  // Modo pestaña dentro del modal: 'food' o 'dish'
-  const [modalTab, setModalTab] = useState<'food' | 'dish'>('food');
+  // Platillos guardados y platillo seleccionado para registrar
   const [savedDishes, setSavedDishes] = useState<any[]>([]);
   const [selectedDish, setSelectedDish] = useState<any | null>(null);
   const [dishPortionCount, setDishPortionCount] = useState(1);
 
-  // Modo Escáner de Etiqueta con IA
-  const [isAiScannerOpen, setIsAiScannerOpen] = useState(false);
-  const [aiAnalyzing, setAiAnalyzing] = useState(false);
-  const [aiResult, setAiResult] = useState<any>(null);
+  // Comidas planeadas para la semana y para el día actual desde el Plan Semanal
+  const [weeklyPlans, setWeeklyPlans] = useState<any[]>([]);
+  const [plannedMealsForDay, setPlannedMealsForDay] = useState<any[]>([]);
+  const [isLoggingAllPlanned, setIsLoggingAllPlanned] = useState(false);
+  const [loggingPlannedId, setLoggingPlannedId] = useState<string | null>(null);
+  const [deletingPlannedId, setDeletingPlannedId] = useState<string | null>(null);
+  const [selectedPlannedDishForModal, setSelectedPlannedDishForModal] = useState<Dish | null>(null);
 
-  // Modo Escáner de Códigos de Barras (OpenFoodFacts)
-  const [isBarcodeScannerOpen, setIsBarcodeScannerOpen] = useState(false);
+  // Modal para editar / ajustar registro existente
+  const [editingLog, setEditingLog] = useState<any | null>(null);
+  const [editMealType, setEditMealType] = useState<MealType>('lunch');
+  const [editAmountGrams, setEditAmountGrams] = useState<number>(100);
+  const [isUpdatingLog, setIsUpdatingLog] = useState(false);
+  const [editLogError, setEditLogError] = useState<string | null>(null);
+
+  // Platillos guardados filtrados por búsqueda difusa o por categoría sugerida
+  const matchingDishes = useMemo(() => {
+    if (!searchQuery.trim()) {
+      const categorized = savedDishes.filter(
+        (d) => d.category === activeMealType || d.category === 'general'
+      );
+      return categorized.length > 0 ? categorized : savedDishes;
+    }
+    return savedDishes
+      .map((d) => {
+        const nameScore = calculateFuzzyScore(d.name, searchQuery);
+        const descScore = d.description ? calculateFuzzyScore(d.description, searchQuery) : { matches: false, score: 0 };
+        const matches = nameScore.matches || descScore.matches;
+        const score = Math.max(nameScore.score, descScore.score);
+        return { dish: d, score, matches };
+      })
+      .filter((item) => item.matches && item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((item) => item.dish);
+  }, [savedDishes, searchQuery, activeMealType]);
+
+  function getPlanDateInfo(dateStr: string) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    const jsDay = date.getDay();
+    const dayOfWeek = jsDay === 0 ? 7 : jsDay;
+    const diff = d - jsDay + (jsDay === 0 ? -6 : 1);
+    const monday = new Date(y, m - 1, diff);
+    const weekStart = formatDateToYYYYMMDD(monday);
+    return { dayOfWeek, weekStart };
+  }
+
+  const fetchPlannedMeals = async (date: string) => {
+    try {
+      const { dayOfWeek, weekStart } = getPlanDateInfo(date);
+      const res = await fetch(`/api/meal-plans?week_start=${weekStart}`);
+      if (res.ok) {
+        const data = await res.json();
+        const allPlans = data.plans || [];
+        setWeeklyPlans(allPlans);
+        const forDay = allPlans.filter((p: any) => p.day_of_week === dayOfWeek);
+        setPlannedMealsForDay(forDay);
+      } else {
+        setWeeklyPlans([]);
+        setPlannedMealsForDay([]);
+      }
+    } catch {
+      setWeeklyPlans([]);
+      setPlannedMealsForDay([]);
+    }
+  };
 
   const fetchLogs = async (date: string) => {
     setLoading(true);
@@ -56,8 +235,138 @@ export default function DailyDiary() {
     }
   };
 
+  const handleLogPlannedMeal = async (planned: any, mealType: MealType) => {
+    setLoggingPlannedId(planned.id);
+    try {
+      const baseName = (planned.custom_name || '').replace(/\s*\(.*$/, '').trim().toLowerCase();
+      const matchedDish = savedDishes.find(
+        (d) => d.name.toLowerCase().trim() === baseName || baseName.includes(d.name.toLowerCase().trim())
+      );
+      const servings = planned.servings || 1;
+      const resolvedFiber =
+        planned.fiber_g !== undefined && planned.fiber_g !== null && Number(planned.fiber_g) > 0
+          ? Number((Number(planned.fiber_g) * servings).toFixed(1))
+          : matchedDish
+          ? Number(((matchedDish.fiber_per_serving || 0) * servings).toFixed(1))
+          : 0;
+
+      const res = await fetch('/api/food-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: selectedDate,
+          meal_type: mealType,
+          food_id: planned.food_id || null,
+          food_name: planned.custom_name,
+          amount_g: planned.servings ? Math.round(planned.servings * 250) : 250,
+          calories: planned.calories,
+          protein_g: planned.protein_g,
+          carbs_g: planned.carbs_g,
+          fat_g: planned.fat_g,
+          fiber_g: resolvedFiber,
+        }),
+      });
+      if (res.ok) {
+        await fetchLogs(selectedDate);
+      }
+    } catch {
+      // Ignorar
+    } finally {
+      setLoggingPlannedId(null);
+    }
+  };
+
+  const handleRemovePlannedMeal = async (planId: string) => {
+    setDeletingPlannedId(planId);
+    try {
+      const res = await fetch(`/api/meal-plans?id=${planId}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setWeeklyPlans((prev) => prev.filter((p) => p.id !== planId));
+        setPlannedMealsForDay((prev) => prev.filter((p) => p.id !== planId));
+      }
+    } catch {
+      // Ignorar
+    } finally {
+      setDeletingPlannedId(null);
+    }
+  };
+
+  const handleLogAllPlanned = async () => {
+    const unlogged = plannedMealsForDay.filter(
+      (p) => !logs.some((l) => l.meal_type === p.meal_type)
+    );
+    if (unlogged.length === 0) return;
+
+    setIsLoggingAllPlanned(true);
+    try {
+      for (const item of unlogged) {
+        const baseName = (item.custom_name || '').replace(/\s*\(.*$/, '').trim().toLowerCase();
+        const matchedDish = savedDishes.find(
+          (d) => d.name.toLowerCase().trim() === baseName || baseName.includes(d.name.toLowerCase().trim())
+        );
+        const servings = item.servings || 1;
+        const resolvedFiber =
+          item.fiber_g !== undefined && item.fiber_g !== null && Number(item.fiber_g) > 0
+            ? Number((Number(item.fiber_g) * servings).toFixed(1))
+            : matchedDish
+            ? Number(((matchedDish.fiber_per_serving || 0) * servings).toFixed(1))
+            : 0;
+
+        await fetch('/api/food-logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date: selectedDate,
+            meal_type: item.meal_type,
+            food_id: item.food_id || null,
+            food_name: item.custom_name,
+            amount_g: item.servings ? Math.round(item.servings * 250) : 250,
+            calories: item.calories,
+            protein_g: item.protein_g,
+            carbs_g: item.carbs_g,
+            fat_g: item.fat_g,
+            fiber_g: resolvedFiber,
+          }),
+        });
+      }
+      await fetchLogs(selectedDate);
+    } catch {
+      // Ignorar
+    } finally {
+      setIsLoggingAllPlanned(false);
+    }
+  };
+
+  const handleOpenPlannedRecipe = (planned: any) => {
+    const rawMealName = planned.custom_name.trim();
+    const baseMealName = rawMealName.replace(/\s*\(.*$/, '').trim().toLowerCase();
+
+    const matched =
+      savedDishes.find(
+        (d) =>
+          (planned.food_id && d.id === planned.food_id) ||
+          d.name.toLowerCase().trim() === baseMealName ||
+          d.name.toLowerCase().includes(baseMealName) ||
+          baseMealName.includes(d.name.toLowerCase().trim())
+      ) ||
+      STARTER_RECIPES.find(
+        (s) =>
+          (planned.food_id && s.id === planned.food_id) ||
+          s.name.toLowerCase().trim() === baseMealName ||
+          s.name.toLowerCase().includes(baseMealName) ||
+          baseMealName.includes(s.name.toLowerCase().trim())
+      );
+
+    if (matched) {
+      setSelectedPlannedDishForModal(matched);
+    }
+  };
+
   useEffect(() => {
     fetchLogs(selectedDate);
+    fetchPlannedMeals(selectedDate);
     fetchDishes();
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem(`duocal_water_${selectedDate}`);
@@ -76,42 +385,84 @@ export default function DailyDiary() {
   };
 
   const changeDate = (days: number) => {
-    const current = new Date(selectedDate + 'T00:00:00');
-    current.setDate(current.getDate() + days);
-    setSelectedDate(current.toISOString().split('T')[0]);
+    setSelectedDate((prev) => shiftDateDays(prev, days));
   };
 
-  const handleSearch = async (query: string) => {
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleSearch = (query: string) => {
     setSearchQuery(query);
+
+    // Cancelar debounce previo si el usuario sigue tecleando
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // Cancelar cualquier petición HTTP que esté en vuelo
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+      searchAbortRef.current = null;
+    }
+
     if (!query.trim()) {
       setSearchResults([]);
+      setSearching(false);
       return;
     }
+
     setSearching(true);
-    try {
-      const res = await fetch(`/api/foods/search?q=${encodeURIComponent(query)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setSearchResults(data.foods || []);
+    searchTimeoutRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+
+      try {
+        const res = await fetch(`/api/foods/search?q=${encodeURIComponent(query.trim())}`, {
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data.foods || []);
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          // Solamente ignorar cancelaciones intencionales
+        }
+      } finally {
+        if (searchAbortRef.current === controller) {
+          setSearching(false);
+        }
       }
-    } finally {
-      setSearching(false);
-    }
+    }, 220);
+  };
+
+  const clearSearch = () => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (searchAbortRef.current) searchAbortRef.current.abort();
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearching(false);
   };
 
   const handleSelectFood = (food: Food) => {
     setSelectedFood(food);
-    setAmountGrams(food.serving_size_g || 100);
+    const unitInfo = getFoodUnitInfo(food);
+    setAmountGrams(unitInfo.unitGrams);
+    setSaveLogError(null);
   };
 
   const handleSaveLog = async () => {
     if (!selectedFood) return;
+
+    setIsSavingFoodLog(true);
+    setSaveLogError(null);
 
     const ratio = amountGrams / (selectedFood.serving_size_g || 100);
     const calories = Math.round(selectedFood.calories * ratio);
     const protein_g = Number((selectedFood.protein_g * ratio).toFixed(1));
     const carbs_g = Number((selectedFood.carbs_g * ratio).toFixed(1));
     const fat_g = Number((selectedFood.fat_g * ratio).toFixed(1));
+    const fiber_g = Number((((selectedFood as any).fiber_g || 0) * ratio).toFixed(1));
 
     try {
       const res = await fetch('/api/food-logs', {
@@ -127,6 +478,7 @@ export default function DailyDiary() {
           protein_g,
           carbs_g,
           fat_g,
+          fiber_g,
         }),
       });
 
@@ -136,9 +488,14 @@ export default function DailyDiary() {
         setSelectedFood(null);
         setSearchQuery('');
         setSearchResults([]);
+      } else {
+        const errData = await res.json();
+        setSaveLogError(errData.error || 'Error al guardar el registro.');
       }
-    } catch {
-      // Manejar error
+    } catch (err: any) {
+      setSaveLogError(err.message || 'Error de conexión al registrar.');
+    } finally {
+      setIsSavingFoodLog(false);
     }
   };
 
@@ -161,6 +518,7 @@ export default function DailyDiary() {
     const protein_g = Number((selectedDish.protein_per_serving * count).toFixed(1));
     const carbs_g = Number((selectedDish.carbs_per_serving * count).toFixed(1));
     const fat_g = Number((selectedDish.fat_per_serving * count).toFixed(1));
+    const fiber_g = Number(((selectedDish.fiber_per_serving || 0) * count).toFixed(1));
     const amount_g = selectedDish.total_weight_g
       ? Math.round((selectedDish.total_weight_g / selectedDish.total_servings) * count)
       : Math.round(250 * count);
@@ -179,6 +537,7 @@ export default function DailyDiary() {
           protein_g,
           carbs_g,
           fat_g,
+          fiber_g,
         }),
       });
 
@@ -201,54 +560,49 @@ export default function DailyDiary() {
     }
   };
 
-  // Manejo de foto de tabla nutrimental
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleOpenEditLog = (log: any) => {
+    setEditingLog(log);
+    setEditMealType(log.meal_type || 'lunch');
+    setEditAmountGrams(log.amount_g || 100);
+    setEditLogError(null);
+  };
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = reader.result as string;
-      setAiAnalyzing(true);
-      try {
-        const res = await fetch('/api/vision/nutrition-label', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: base64 }),
-        });
-        if (res.ok) {
-          const result = await res.json();
-          setAiResult(result.data);
-        }
-      } finally {
-        setAiAnalyzing(false);
+  const handleSaveEditLog = async () => {
+    if (!editingLog) return;
+    setIsUpdatingLog(true);
+    setEditLogError(null);
+    try {
+      const originalAmount = editingLog.amount_g || 1;
+      const ratio = editAmountGrams > 0 ? editAmountGrams / originalAmount : 1;
+      const payload = {
+        id: editingLog.id,
+        meal_type: editMealType,
+        amount_g: editAmountGrams,
+        calories: Math.round(editingLog.calories * ratio),
+        protein_g: Number((editingLog.protein_g * ratio).toFixed(1)),
+        carbs_g: Number((editingLog.carbs_g * ratio).toFixed(1)),
+        fat_g: Number((editingLog.fat_g * ratio).toFixed(1)),
+        fiber_g: Number(((editingLog.fiber_g || 0) * ratio).toFixed(1)),
+      };
+      const res = await fetch('/api/food-logs', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Error al actualizar el registro');
       }
-    };
-    reader.readAsDataURL(file);
+      setEditingLog(null);
+      await fetchLogs(selectedDate);
+    } catch (err: any) {
+      setEditLogError(err.message || 'Error al actualizar');
+    } finally {
+      setIsUpdatingLog(false);
+    }
   };
 
-  const handleConfirmAiFood = () => {
-    if (!aiResult) return;
-    const food: Food = {
-      id: 'f-ai-' + Math.random().toString(36).substring(2, 7),
-      user_id: null,
-      name: aiResult.product_name || 'Alimento reconocido',
-      brand: 'Escaneado por IA',
-      serving_size_g: Number(aiResult.serving_size_g) || 100,
-      serving_unit: 'g',
-      calories: Number(aiResult.calories) || 0,
-      protein_g: Number(aiResult.protein_g) || 0,
-      carbs_g: Number(aiResult.carbs_g) || 0,
-      fat_g: Number(aiResult.fat_g) || 0,
-      source: 'ai_label',
-      barcode: null,
-      is_verified: true,
-      created_at: new Date().toISOString(),
-    };
-    setIsAiScannerOpen(false);
-    setSelectedFood(food);
-    setAmountGrams(food.serving_size_g);
-  };
+
 
   const meals: { type: MealType; label: string }[] = [
     { type: 'breakfast', label: 'Desayuno' },
@@ -283,7 +637,7 @@ export default function DailyDiary() {
             className="bg-transparent text-sm font-bold text-zinc-900 dark:text-white border-0 text-center cursor-pointer focus:outline-none"
           />
           <span className="block text-[11px] text-zinc-400">
-            {selectedDate === new Date().toISOString().split('T')[0] ? 'Hoy' : 'Día seleccionado'}
+            {selectedDate === getLocalDateString() ? 'Hoy' : 'Día seleccionado'}
           </span>
         </div>
 
@@ -295,9 +649,11 @@ export default function DailyDiary() {
         </button>
       </div>
 
-      {/* Barra de Acceso Rápido en 1 Toque (Comidas Frecuentes) */}
+      {/* Barra de Acceso Rápido en 1 Toque (Platillos Programados en la Semana) */}
       <FrequentFoodsBar
         selectedDate={selectedDate}
+        weeklyPlans={weeklyPlans}
+        currentLogs={logs}
         onLogAdded={() => fetchLogs(selectedDate)}
       />
 
@@ -496,11 +852,46 @@ export default function DailyDiary() {
         </div>
       </div>
 
+      {/* Banner de Comidas Planeadas del Plan Semanal para este día */}
+      {(() => {
+        const unloggedPlanned = plannedMealsForDay.filter(
+          (p) => !logs.some((l) => l.meal_type === p.meal_type)
+        );
+        if (unloggedPlanned.length === 0) return null;
+
+        return (
+          <div className="bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/10 dark:from-emerald-950/40 dark:to-teal-950/20 border border-emerald-500/30 rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3 w-full sm:w-auto text-left">
+              <div className="p-2.5 bg-emerald-600 text-white rounded-2xl shadow-xs shrink-0">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-zinc-900 dark:text-white">
+                  Tienes {unloggedPlanned.length} comida{unloggedPlanned.length === 1 ? '' : 's'} planeada{unloggedPlanned.length === 1 ? '' : 's'} para hoy
+                </p>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {unloggedPlanned.map((p) => p.custom_name.replace(/\s*\(.*$/, '')).join(', ')}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleLogAllPlanned}
+              disabled={isLoggingAllPlanned}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition shrink-0"
+            >
+              <CheckCheck className="w-4 h-4" />
+              <span>{isLoggingAllPlanned ? 'Registrando...' : 'Registrar'}</span>
+            </button>
+          </div>
+        );
+      })()}
+
       {/* 3. Secciones por Comida */}
       <div className="space-y-4">
         {meals.map((meal) => {
           const mealLogs = logs.filter((l) => l.meal_type === meal.type);
           const mealCals = mealLogs.reduce((sum, item) => sum + item.calories, 0);
+          const plannedForThisMeal = plannedMealsForDay.filter((p) => p.meal_type === meal.type);
 
           return (
             <div
@@ -525,7 +916,100 @@ export default function DailyDiary() {
                 </button>
               </div>
 
-              {mealLogs.length === 0 ? (
+              {/* Tarjeta de comida planeada si existe en el Plan Semanal */}
+              {plannedForThisMeal.length > 0 && (
+                <div className="space-y-2 mb-3">
+                  {plannedForThisMeal.map((planned) => {
+                    const baseName = planned.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
+                    const isLogged = mealLogs.some((l) =>
+                      l.food_name.toLowerCase().includes(baseName)
+                    );
+
+                    if (isLogged) {
+                      return (
+                        <div
+                          key={planned.id}
+                          className="flex items-center justify-between p-2 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-900/40 text-[11px] text-emerald-700 dark:text-emerald-400"
+                        >
+                          <span className="flex items-center gap-1 font-medium">
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Planeado y comido: <strong>{planned.custom_name}</strong></span>
+                          </span>
+                          <span className="text-[10px] font-bold">{planned.calories} kcal</span>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={planned.id}
+                        className="bg-emerald-50/70 dark:bg-emerald-950/30 border-2 border-emerald-500/40 rounded-2xl p-3 space-y-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-extrabold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Planeado en tu Plan Semanal:</span>
+                          </span>
+                          <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-md font-bold">
+                            {planned.calories} kcal
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white dark:bg-zinc-800/90 p-2.5 rounded-xl border border-emerald-200/80 dark:border-emerald-800/60">
+                          <div
+                            className="min-w-0 flex-1 cursor-pointer"
+                            onClick={() => handleOpenPlannedRecipe(planned)}
+                            title="Ver receta, medidas y preparación"
+                          >
+                            <p className="text-xs font-bold text-zinc-900 dark:text-white hover:text-emerald-600 transition truncate">
+                              {planned.custom_name}
+                            </p>
+                            <p className="text-[11px] text-zinc-400">
+                              P: {planned.protein_g}g • C: {planned.carbs_g}g • G: {planned.fat_g}g
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => handleLogPlannedMeal(planned, meal.type)}
+                              disabled={loggingPlannedId === planned.id}
+                              className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-xs transition disabled:opacity-50"
+                              title="Registrar directamente a tu diario con 1 clic"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>{loggingPlannedId === planned.id ? 'Registrando...' : 'Registrar'}</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleOpenPlannedRecipe(planned)}
+                              className="p-1.5 bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 rounded-xl text-xs transition"
+                              title="Ver preparación, medidas e ingredientes"
+                            >
+                              <ChefHat className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePlannedMeal(planned.id)}
+                              disabled={deletingPlannedId === planned.id}
+                              className="p-1.5 bg-zinc-100 dark:bg-zinc-700 hover:bg-red-50 dark:hover:bg-red-950/60 hover:text-red-600 dark:hover:text-red-400 text-zinc-400 rounded-xl text-xs transition disabled:opacity-50"
+                              title="Quitar esta comida planeada"
+                            >
+                              {deletingPlannedId === planned.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-red-500" />
+                              ) : (
+                                <X className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {mealLogs.length === 0 && plannedForThisMeal.length === 0 ? (
                 <p className="text-xs text-zinc-400 italic py-1">Sin alimentos registrados aún.</p>
               ) : (
                 <div className="space-y-2">
@@ -540,16 +1024,25 @@ export default function DailyDiary() {
                         </span>
                         <span className="text-zinc-400 text-[11px]">
                           {log.amount_g}g • P: {log.protein_g}g • C: {log.carbs_g}g • G: {log.fat_g}g
+                          {log.fiber_g ? ` • Fibra: ${log.fiber_g}g` : ''}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-3 shrink-0">
-                        <span className="font-bold text-zinc-900 dark:text-white">
+                      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                        <span className="font-bold text-zinc-900 dark:text-white mr-1">
                           {log.calories} kcal
                         </span>
                         <button
+                          onClick={() => handleOpenEditLog(log)}
+                          className="text-zinc-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition p-1.5"
+                          title="Ajustar porción o mover a otra comida"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
                           onClick={() => handleDeleteLog(log.id)}
-                          className="text-zinc-400 hover:text-red-500 transition p-1"
+                          className="text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition p-1.5"
+                          title="Eliminar registro"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -568,19 +1061,21 @@ export default function DailyDiary() {
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="bg-white dark:bg-zinc-900 w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-5 max-h-[85vh] flex flex-col border border-zinc-200 dark:border-zinc-800 shadow-2xl">
             {/* Header del modal */}
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-zinc-800">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
               <div>
                 <h3 className="text-base font-bold text-zinc-900 dark:text-white">
                   Añadir a {meals.find((m) => m.type === activeMealType)?.label}
                 </h3>
                 <span className="text-xs text-zinc-400">
-                  Open Food Facts, catálogo propio o escaneo con IA
+                  Platillos de tu plan semanal o búsqueda de alimentos
                 </span>
               </div>
               <button
                 onClick={() => {
                   setIsModalOpen(false);
                   setSelectedFood(null);
+                  setSelectedDish(null);
+                  clearSearch();
                 }}
                 className="p-1 text-zinc-400 hover:text-zinc-800 dark:hover:text-white"
               >
@@ -588,146 +1083,394 @@ export default function DailyDiary() {
               </button>
             </div>
 
-            {/* Selector de tipo: Alimento Simple vs Platillos Guardados */}
-            <div className="flex bg-zinc-100 dark:bg-zinc-800 p-1 rounded-2xl mb-2 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  setModalTab('food');
-                  setSelectedDish(null);
-                  setSelectedFood(null);
-                }}
-                className={`flex-1 py-1.5 rounded-xl font-bold transition ${
-                  modalTab === 'food'
-                    ? 'bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
-                    : 'text-zinc-500 hover:text-zinc-800'
-                }`}
-              >
-                Alimento Simple / Búsqueda
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setModalTab('dish');
-                  setSelectedFood(null);
-                  setSelectedDish(null);
-                  fetchDishes();
-                }}
-                className={`flex-1 py-1.5 rounded-xl font-bold transition ${
-                  modalTab === 'dish'
-                    ? 'bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
-                    : 'text-zinc-500 hover:text-zinc-800'
-                }`}
-              >
-                Platillos Preparados ({savedDishes.length})
-              </button>
-            </div>
+            {/* CUERPO PRINCIPAL DEL MODAL */}
+            {!selectedFood && !selectedDish ? (
+              <div className="flex-1 overflow-y-auto py-2 space-y-4 pr-0.5">
+                {/* 1. SECCIÓN PRINCIPAL: PLATILLOS DEL PLAN SEMANAL (DEDUPLICADOS) */}
+                {(() => {
+                  const { dayOfWeek: selectedDayOfWeek } = getPlanDateInfo(selectedDate);
+                  const isToday = selectedDate === getLocalDateString();
 
-            {/* MODO 1: ALIMENTOS SIMPLES */}
-            {modalTab === 'food' && (
-              <>
-                {!selectedFood ? (
-                  <div className="flex-1 overflow-y-auto py-2 space-y-3">
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-3" />
-                        <input
-                          type="text"
-                          placeholder="Buscar pollo, arroz, yogur, avena..."
-                          value={searchQuery}
-                          onChange={(e) => handleSearch(e.target.value)}
-                          className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl pl-9 pr-3 py-2 text-xs text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
+                  // Helper: verificar si este platillo ya fue registrado en esta comida hoy
+                  const isItemAlreadyLogged = (name: string) => {
+                    const base = name.replace(/\s*\(.*$/, '').trim().toLowerCase();
+                    return logs.some(
+                      (l) =>
+                        l.meal_type === activeMealType &&
+                        (l.food_name.toLowerCase().includes(base) || base.includes(l.food_name.toLowerCase().trim()))
+                    );
+                  };
+
+                  // 1. Platillo planeado específicamente para este día y esta comida (excluyendo si ya se registró)
+                  const plannedForThisDay = weeklyPlans.filter(
+                    (p) =>
+                      Number(p.day_of_week) === Number(selectedDayOfWeek) &&
+                      p.meal_type === activeMealType &&
+                      !isItemAlreadyLogged(p.custom_name)
+                  );
+
+                  // Evitar cualquier duplicación por nombre de platillo
+                  const shownNames = new Set(
+                    plannedForThisDay.map((p) => p.custom_name.trim().toLowerCase())
+                  );
+
+                  // 2. Otros platillos únicos de la semana (DEDUPLICADOS por nombre y excluyendo si ya se registraron)
+                  const otherUniquePlans: any[] = [];
+                  const seenNames = new Set<string>();
+
+                  // Primero otros días para esta misma comida (ej. tu meal prep habitual de Desayuno/Cena)
+                  weeklyPlans
+                    .filter(
+                      (p) =>
+                        p.meal_type === activeMealType &&
+                        Number(p.day_of_week) !== Number(selectedDayOfWeek) &&
+                        !isItemAlreadyLogged(p.custom_name)
+                    )
+                    .forEach((p) => {
+                      const norm = p.custom_name.trim().toLowerCase();
+                      if (!shownNames.has(norm) && !seenNames.has(norm)) {
+                        seenNames.add(norm);
+                        otherUniquePlans.push(p);
+                      }
+                    });
+
+                  // Si hoy no hay nada planeado y tampoco otros días para esta comida, ver de otras comidas no registradas
+                  if (plannedForThisDay.length === 0 && otherUniquePlans.length === 0) {
+                    weeklyPlans
+                      .filter((p) => !isItemAlreadyLogged(p.custom_name))
+                      .forEach((p) => {
+                        const norm = p.custom_name.trim().toLowerCase();
+                        if (!shownNames.has(norm) && !seenNames.has(norm)) {
+                          seenNames.add(norm);
+                          otherUniquePlans.push(p);
+                        }
+                      });
+                  }
+
+                  const hasAnyPlanned = plannedForThisDay.length > 0 || otherUniquePlans.length > 0;
+                  if (!hasAnyPlanned) return null;
+
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-emerald-500" />
+                          <span>
+                            {plannedForThisDay.length > 0
+                              ? `Planeado para ${isToday ? 'hoy' : 'este día'}`
+                              : 'Sugerido de tu Plan Semanal'}
+                          </span>
+                        </span>
                       </div>
 
-                      <button
-                        onClick={() => setIsBarcodeScannerOpen(true)}
-                        title="Escanear código de barras con cámara"
-                        className="flex items-center gap-1.5 px-3 py-2 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 rounded-xl text-xs font-semibold hover:bg-teal-100 transition shrink-0"
-                      >
-                        <Barcode className="w-4 h-4" />
-                        <span>Código</span>
-                      </button>
+                      {/* Tarjeta del día actual (1 sola tarjeta) */}
+                      {plannedForThisDay.length > 0 && (
+                        <div className="space-y-2">
+                          {plannedForThisDay.map((plannedItem) => (
+                            <div
+                              key={plannedItem.id}
+                              className="bg-emerald-50/70 dark:bg-emerald-950/30 border-2 border-emerald-500/40 rounded-2xl p-3 flex items-center justify-between gap-3 shadow-xs"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <span className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase tracking-tight bg-emerald-600 text-white">
+                                    {isToday ? 'Hoy' : 'Este día'}
+                                  </span>
+                                  <span className="text-[10px] text-zinc-400 font-medium">
+                                    {plannedItem.calories} kcal
+                                  </span>
+                                </div>
+                                <span className="text-xs font-bold text-zinc-900 dark:text-white truncate block">
+                                  {plannedItem.custom_name}
+                                </span>
+                                <span className="text-[10px] text-zinc-500 dark:text-zinc-400 font-medium">
+                                  P: {plannedItem.protein_g}g • C: {plannedItem.carbs_g}g • G: {plannedItem.fat_g}g
+                                </span>
+                              </div>
 
-                      <button
-                        onClick={() => setIsAiScannerOpen(true)}
-                        title="Escanear tabla con foto"
-                        className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs font-semibold hover:bg-emerald-100 transition shrink-0"
-                      >
-                        <Camera className="w-4 h-4" />
-                        <span>Foto IA</span>
-                      </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleLogPlannedMeal(plannedItem, activeMealType);
+                                  setIsModalOpen(false);
+                                }}
+                                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white rounded-xl text-xs font-bold shrink-0 shadow-xs transition flex items-center gap-1"
+                                title="Registrar a esta comida con 1 clic"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Registrar</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Si hoy no había nada pero hay en otros días: sugerir de forma inteligente con badge 'DE TU PLAN' */}
+                      {plannedForThisDay.length === 0 && otherUniquePlans.length > 0 && (
+                        <div className="space-y-2">
+                          {otherUniquePlans.map((plannedItem) => (
+                            <div
+                              key={plannedItem.id}
+                              className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-300 dark:border-emerald-800 rounded-2xl p-3 flex items-center justify-between gap-3 shadow-xs"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <span className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase tracking-tight bg-emerald-600 text-white">
+                                    De tu Plan
+                                  </span>
+                                  <span className="text-[10px] text-zinc-400 font-medium">
+                                    {plannedItem.calories} kcal • Meal prep habitual
+                                  </span>
+                                </div>
+                                <span className="text-xs font-bold text-zinc-900 dark:text-white truncate block">
+                                  {plannedItem.custom_name}
+                                </span>
+                                <span className="text-[10px] text-zinc-500 dark:text-zinc-400 font-medium">
+                                  P: {plannedItem.protein_g}g • C: {plannedItem.carbs_g}g • G: {plannedItem.fat_g}g
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleLogPlannedMeal(plannedItem, activeMealType);
+                                  setIsModalOpen(false);
+                                }}
+                                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white rounded-xl text-xs font-bold shrink-0 shadow-xs transition flex items-center gap-1"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Registrar</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Ver otros platillos distintos de la semana (desplegable) */}
+                      {plannedForThisDay.length > 0 && otherUniquePlans.length > 0 && (
+                        <details className="group pt-1">
+                          <summary className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 cursor-pointer hover:underline list-none flex items-center gap-1">
+                            <span>+ Ver otros platillos distintos de la semana ({otherUniquePlans.length})</span>
+                          </summary>
+                          <div className="space-y-1.5 mt-2">
+                            {otherUniquePlans.map((otherItem) => (
+                              <div
+                                key={otherItem.id}
+                                className="bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1 mb-0.5">
+                                    <span className="px-1 py-0.2 rounded text-[8px] font-bold bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 uppercase">
+                                      De tu Plan
+                                    </span>
+                                    <span className="text-[10px] text-zinc-400">{otherItem.calories} kcal</span>
+                                  </div>
+                                  <p className="font-semibold text-zinc-800 dark:text-zinc-200 truncate">{otherItem.custom_name}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleLogPlannedMeal(otherItem, activeMealType);
+                                    setIsModalOpen(false);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold text-[11px] shrink-0"
+                                >
+                                  Añadir
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
                     </div>
+                  );
+                })()}
 
+                {/* 2. SECCIÓN: BUSCADOR UNIVERSAL (PLATILLOS Y ALIMENTOS) */}
+                <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                      ¿Comiste otra cosa?
+                    </span>
+                    <span className="text-[10px] text-zinc-400">
+                      Busca en tus platillos o ingredientes
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Buscar platillo o alimento (ej. pollo, arroz, avena)..."
+                      value={searchQuery}
+                      onChange={(e) => handleSearch(e.target.value)}
+                      className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl pl-9 pr-8 py-2 text-xs text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder:text-zinc-400"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={clearSearch}
+                        className="absolute right-2.5 top-2.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* RESULTADOS UNIFICADOS O LISTA DE TUS PLATILLOS */}
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-0.5">
                     {searching && (
-                      <p className="text-xs text-zinc-400 text-center py-4">Buscando alimentos...</p>
+                      <p className="text-xs text-zinc-400 text-center py-3">Buscando alimentos...</p>
                     )}
 
-                    {searchResults.length > 0 && (
-                      <div className="space-y-1.5">
+                    {/* Si hay texto de búsqueda, mostrar platillos guardados coincidentes primero */}
+                    {searchQuery.trim() && matchingDishes.length > 0 && (
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block px-1">
+                          Tus Platillos ({matchingDishes.length})
+                        </span>
+                        {matchingDishes.map((d) => {
+                          const isAlreadyLogged = logs.some(
+                            (l) =>
+                              l.meal_type === activeMealType &&
+                              l.food_name.toLowerCase().includes(d.name.toLowerCase().trim())
+                          );
+
+                          return (
+                            <button
+                              key={d.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedDish(d);
+                                setDishPortionCount(1);
+                              }}
+                              className="w-full text-left p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 border border-zinc-200 dark:border-zinc-700/60 transition flex justify-between items-center"
+                            >
+                              <div className="pr-2 truncate">
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <span className="text-xs font-bold text-zinc-900 dark:text-white truncate">
+                                    {d.name}
+                                  </span>
+                                  {isAlreadyLogged && (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 shrink-0">
+                                      ✓ Registrado
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-zinc-500 block truncate">
+                                  Por {d.serving_name}: P {d.protein_per_serving}g • C {d.carbs_per_serving}g • G {d.fat_per_serving}g
+                                </span>
+                              </div>
+                              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
+                                {d.calories_per_serving} kcal
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Alimentos de la base de datos coincidentes */}
+                    {searchQuery.trim() && searchResults.length > 0 && (
+                      <div className="space-y-1 pt-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block px-1">
+                          Alimentos Básicos ({searchResults.length})
+                        </span>
                         {searchResults.map((f) => (
                           <button
                             key={f.id}
+                            type="button"
                             onClick={() => handleSelectFood(f)}
-                            className="w-full text-left p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 border border-zinc-200 dark:border-zinc-700/60 transition flex justify-between items-center"
+                            className="w-full text-left p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 hover:bg-zinc-100 dark:hover:bg-zinc-700/60 border border-zinc-200 dark:border-zinc-700/60 transition flex justify-between items-center"
                           >
-                            <div className="pr-2">
-                              <span className="text-xs font-semibold text-zinc-900 dark:text-white block">
-                                {f.name}
-                              </span>
-                              <span className="text-[11px] text-zinc-400">
+                            <div className="pr-2 truncate">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="text-[9px] font-medium bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.2 rounded-md uppercase">
+                                  Alimento
+                                </span>
+                                <span className="text-xs font-semibold text-zinc-900 dark:text-white truncate">
+                                  {f.name}
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-zinc-400 block truncate">
                                 {f.brand ? `${f.brand} • ` : ''}Por 100g: P {f.protein_g}g • C {f.carbs_g}g • G {f.fat_g}g
                               </span>
                             </div>
-                            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
+                            <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 shrink-0">
                               {f.calories} kcal
                             </span>
                           </button>
                         ))}
                       </div>
                     )}
-                  </div>
-                ) : null}
-              </>
-            )}
 
-            {/* MODO 2: PLATILLOS PREPARADOS */}
-            {modalTab === 'dish' && (
-              <>
-                {!selectedDish ? (
-                  <div className="flex-1 overflow-y-auto py-2 space-y-2">
-                    {savedDishes.length === 0 ? (
-                      <div className="text-center py-8 text-zinc-400 text-xs">
-                        <p>No hay platillos creados todavía.</p>
-                        <p className="mt-1 text-zinc-500">Ve a la pestaña &ldquo;Platillos&rdquo; para crear tu primera receta compuesta.</p>
+                    {/* Sin resultados tras buscar */}
+                    {searchQuery.trim() && !searching && matchingDishes.length === 0 && searchResults.length === 0 && (
+                      <div className="p-4 text-center text-zinc-400 text-xs bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700/60">
+                        No se encontraron platillos ni alimentos con "{searchQuery}".
                       </div>
-                    ) : (
-                      savedDishes.map((d) => (
-                        <button
-                          key={d.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedDish(d);
-                            setDishPortionCount(1);
-                          }}
-                          className="w-full text-left p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 border border-zinc-200 dark:border-zinc-700/60 transition flex justify-between items-center"
-                        >
-                          <div className="pr-2">
-                            <span className="text-xs font-bold text-zinc-900 dark:text-white block">
-                              {d.name}
-                            </span>
-                            <span className="text-[11px] text-zinc-500">
-                              Por {d.serving_name}: P {d.protein_per_serving}g • C {d.carbs_per_serving}g • G {d.fat_per_serving}g
-                            </span>
+                    )}
+
+                    {/* Si no hay búsqueda escrita: mostrar tus platillos guardados listos para 1 clic */}
+                    {!searchQuery.trim() && (
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block px-1">
+                          Tus Platillos Guardados ({savedDishes.length})
+                        </span>
+                        {savedDishes.length === 0 ? (
+                          <div className="text-center py-4 text-zinc-400 text-xs bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700/60">
+                            <p>Aún no tienes platillos guardados en tu catálogo.</p>
+                            <p className="text-[11px] text-zinc-500 mt-0.5">Escribe arriba para buscar cualquier alimento o regístralos en "Platillos".</p>
                           </div>
-                          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
-                            {d.calories_per_serving} kcal
-                          </span>
-                        </button>
-                      ))
+                        ) : (
+                          matchingDishes.map((d) => {
+                            const isAlreadyLogged = logs.some(
+                              (l) =>
+                                l.meal_type === activeMealType &&
+                                l.food_name.toLowerCase().includes(d.name.toLowerCase().trim())
+                            );
+
+                            return (
+                              <button
+                                key={d.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDish(d);
+                                  setDishPortionCount(1);
+                                }}
+                                className="w-full text-left p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 border border-zinc-200 dark:border-zinc-700/60 transition flex justify-between items-center"
+                              >
+                                <div className="pr-2 truncate">
+                                  <div className="flex items-center gap-1.5 mb-0.5">
+                                    <span className="text-xs font-bold text-zinc-900 dark:text-white truncate">
+                                      {d.name}
+                                    </span>
+                                    {isAlreadyLogged && (
+                                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 shrink-0">
+                                        ✓ Registrado
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-zinc-500 block truncate">
+                                    Por {d.serving_name}: P {d.protein_per_serving}g • C {d.carbs_per_serving}g • G {d.fat_per_serving}g
+                                  </span>
+                                </div>
+                                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
+                                  {d.calories_per_serving} kcal
+                                </span>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
                     )}
                   </div>
-                ) : (
+                </div>
+              </div>
+            ) : null}
+
+            {/* MODO 2: CONFIGURAR PORCIONES DEL PLATILLO SELECCIONADO */}
+            {selectedDish && (
                   /* Configurar porciones del platillo seleccionado */
                   <div className="py-4 space-y-4">
                     <div className="p-4 bg-zinc-50 dark:bg-zinc-800/80 rounded-2xl border border-zinc-200 dark:border-zinc-700">
@@ -807,11 +1550,9 @@ export default function DailyDiary() {
                     </div>
                   </div>
                 )}
-              </>
-            )}
 
             {/* Configurar gramos para alimento simple */}
-            {modalTab === 'food' && selectedFood && (
+            {selectedFood && (
               /* Configurar gramos y registrar */
               <div className="py-4 space-y-4">
                 <div className="p-4 bg-zinc-50 dark:bg-zinc-800/80 rounded-2xl border border-zinc-200 dark:border-zinc-700">
@@ -823,19 +1564,64 @@ export default function DailyDiary() {
                   )}
 
                   <div className="mt-4">
-                    <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-300 mb-1">
-                      Cantidad en gramos
-                    </label>
-                    <input
-                      type="number"
-                      value={amountGrams}
-                      onChange={(e) => setAmountGrams(Math.max(1, Number(e.target.value)))}
-                      className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3 py-2 text-base font-bold text-zinc-900 dark:text-white text-center"
-                    />
+                    {(() => {
+                      const unitInfo = getFoodUnitInfo(selectedFood);
+                      const pieceCount = unitInfo.isPieceBased
+                        ? (amountGrams / unitInfo.unitGrams).toFixed(1).replace('.0', '')
+                        : null;
+
+                      return (
+                        <>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                              Cantidad a registrar
+                            </label>
+                            <span className="text-[11px] text-zinc-500 font-medium">
+                              {unitInfo.isPieceBased
+                                ? `1 ${unitInfo.unitName} ≈ ${unitInfo.unitGrams}g`
+                                : `Porción base: ${unitInfo.unitGrams}g`}
+                            </span>
+                          </div>
+
+                          {/* Botones de selección rápida */}
+                          <div className="grid grid-cols-4 gap-1.5 mb-2.5">
+                            {unitInfo.options.map((opt) => {
+                              const isSelected = amountGrams === opt.grams;
+                              return (
+                                <button
+                                  key={opt.label}
+                                  type="button"
+                                  onClick={() => setAmountGrams(opt.grams)}
+                                  className={`py-1.5 px-1 rounded-xl text-xs font-bold border transition text-center ${
+                                    isSelected
+                                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                                      : 'bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                                  }`}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="relative">
+                            <input
+                              type="number"
+                              value={amountGrams}
+                              onChange={(e) => setAmountGrams(Math.max(1, Number(e.target.value)))}
+                              className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl px-3 py-2 text-base font-bold text-zinc-900 dark:text-white text-center"
+                            />
+                            <span className="absolute right-3.5 top-2.5 text-xs text-zinc-400 font-medium pointer-events-none">
+                              gramos {pieceCount && unitInfo.isPieceBased ? `(${pieceCount} ${Number(pieceCount) === 1 ? unitInfo.unitName : unitInfo.pluralUnitName})` : ''}
+                            </span>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
 
                   {/* Cálculo dinámico resultante */}
-                  <div className="grid grid-cols-4 gap-2 mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700 text-center">
+                  <div className="grid grid-cols-5 gap-1.5 mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-700 text-center">
                     <div>
                       <span className="text-[10px] text-zinc-400 block">Calorías</span>
                       <span className="text-xs font-bold text-emerald-500">
@@ -860,21 +1646,47 @@ export default function DailyDiary() {
                         {((selectedFood.fat_g * amountGrams) / (selectedFood.serving_size_g || 100)).toFixed(1)}g
                       </span>
                     </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-400 block">🌾 Fibra</span>
+                      <span className="text-xs font-bold text-teal-600 dark:text-teal-400">
+                        {(((selectedFood.fiber_g || 0) * amountGrams) / (selectedFood.serving_size_g || 100)).toFixed(1)}g
+                      </span>
+                    </div>
                   </div>
                 </div>
 
+                {saveLogError && (
+                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-xl flex items-center gap-2 text-xs text-red-700 dark:text-red-300">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{saveLogError}</span>
+                  </div>
+                )}
+
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setSelectedFood(null)}
+                    type="button"
+                    onClick={() => {
+                      setSelectedFood(null);
+                      setSaveLogError(null);
+                    }}
                     className="flex-1 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-600 dark:text-zinc-300"
                   >
                     Volver
                   </button>
                   <button
+                    type="button"
                     onClick={handleSaveLog}
-                    className="flex-2 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold shadow-md shadow-emerald-600/20"
+                    disabled={isSavingFoodLog}
+                    className="flex-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 transition"
                   >
-                    Confirmar y Registrar
+                    {isSavingFoodLog ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Registrando...</span>
+                      </>
+                    ) : (
+                      <span>Confirmar y Registrar</span>
+                    )}
                   </button>
                 </div>
               </div>
@@ -883,106 +1695,199 @@ export default function DailyDiary() {
         </div>
       )}
 
-      {/* MODAL ESPECÍFICO: RECONOCIMIENTO DE TABLA NUTRIMENTAL CON IA (Fase 5) */}
-      {isAiScannerOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-3xl p-6 border border-zinc-200 dark:border-zinc-800 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-emerald-500" />
-                <h3 className="text-sm font-bold text-zinc-900 dark:text-white">
-                  Escáner de Tabla Nutrimental
+
+      {/* MODAL VER RECETA, INGREDIENTES Y ESCALADO DE COMIDA PLANEADA */}
+      {selectedPlannedDishForModal && (
+        <RecipeDetailModal
+          dish={selectedPlannedDishForModal}
+          onClose={() => setSelectedPlannedDishForModal(null)}
+          onLogToday={(dish, count) => {
+            handleLogPlannedMeal(
+              {
+                custom_name: `${dish.name} (${count} ${dish.serving_name || 'porción'})`,
+                calories: Math.round(dish.calories_per_serving * count),
+                protein_g: Number((dish.protein_per_serving * count).toFixed(1)),
+                carbs_g: Number((dish.carbs_per_serving * count).toFixed(1)),
+                fat_g: Number((dish.fat_per_serving * count).toFixed(1)),
+                servings: count,
+              },
+              dish.category === 'general' ? 'lunch' : (dish.category as MealType)
+            );
+            setSelectedPlannedDishForModal(null);
+          }}
+        />
+      )}
+
+      {/* MODAL: AJUSTAR ALIMENTO / CAMBIAR COMIDA O CANTIDAD */}
+      {editingLog && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            {/* Encabezado */}
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-zinc-800">
+              <div>
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                  <Pencil className="w-4 h-4 text-emerald-500" />
+                  Ajustar Alimento
                 </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-1">
+                  {editingLog.food_name}
+                </p>
               </div>
               <button
-                onClick={() => setIsAiScannerOpen(false)}
-                className="text-zinc-400 hover:text-zinc-800"
+                onClick={() => setEditingLog(null)}
+                className="p-1 text-zinc-400 hover:text-zinc-800 dark:hover:text-white rounded-lg transition"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <p className="text-xs text-zinc-500 mb-4">
-              Sube una foto de la etiqueta del producto. La IA extraerá automáticamente calorías y macronutrientes para tu confirmación o ajuste.
-            </p>
-
-            <label className="block w-full border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-2xl p-6 text-center cursor-pointer hover:border-emerald-500 transition mb-4">
-              <Camera className="w-8 h-8 text-zinc-400 mx-auto mb-2" />
-              <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-200 block">
-                Seleccionar o tomar foto de etiqueta
-              </span>
-              <span className="text-[11px] text-zinc-400 block mt-1">Formatos JPG, PNG</span>
-              <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-            </label>
-
-            {aiAnalyzing && (
-              <div className="py-4 text-center">
-                <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                <p className="text-xs text-zinc-500">Analizando información con Gemini Vision...</p>
+            {/* Error si ocurre */}
+            {editLogError && (
+              <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 rounded-xl text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{editLogError}</span>
               </div>
             )}
 
-            {aiResult && !aiAnalyzing && (
-              <div className="space-y-3 p-3 bg-zinc-50 dark:bg-zinc-800 rounded-2xl border border-zinc-200 dark:border-zinc-700">
-                <span className="text-xs font-bold text-emerald-600 block">Datos extraídos (edita si es necesario):</span>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <label className="text-[10px] text-zinc-400 block">Nombre</label>
-                    <input
-                      type="text"
-                      value={aiResult.product_name || ''}
-                      onChange={(e) => setAiResult({ ...aiResult, product_name: e.target.value })}
-                      className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg p-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-zinc-400 block">Calorías (kcal)</label>
-                    <input
-                      type="number"
-                      value={aiResult.calories || 0}
-                      onChange={(e) => setAiResult({ ...aiResult, calories: Number(e.target.value) })}
-                      className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg p-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-zinc-400 block">Proteína (g)</label>
-                    <input
-                      type="number"
-                      value={aiResult.protein_g || 0}
-                      onChange={(e) => setAiResult({ ...aiResult, protein_g: Number(e.target.value) })}
-                      className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg p-1.5"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-zinc-400 block">Carbohidratos (g)</label>
-                    <input
-                      type="number"
-                      value={aiResult.carbs_g || 0}
-                      onChange={(e) => setAiResult({ ...aiResult, carbs_g: Number(e.target.value) })}
-                      className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg p-1.5"
-                    />
-                  </div>
-                </div>
+            {/* 1. Mover a otro tiempo de comida */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
+                Mover a tiempo de comida:
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {meals.map((m) => {
+                  const isSelected = editMealType === m.type;
+                  const icons: Record<MealType, string> = {
+                    breakfast: '🍳',
+                    lunch: '🍛',
+                    dinner: '🥣',
+                    snack: '🍎',
+                  };
+                  return (
+                    <button
+                      key={m.type}
+                      type="button"
+                      onClick={() => setEditMealType(m.type)}
+                      className={`p-2.5 rounded-xl text-xs font-medium border flex items-center gap-2 transition text-left ${
+                        isSelected
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 text-emerald-700 dark:text-emerald-300 font-semibold shadow-sm'
+                          : 'bg-zinc-50 dark:bg-zinc-800/60 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300'
+                      }`}
+                    >
+                      <span className="text-base">{icons[m.type]}</span>
+                      <span className="truncate">{m.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
+            {/* 2. Cantidad en gramos */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                  Cantidad registrada
+                </label>
+                <span className="text-[11px] text-zinc-400">
+                  Gramos (g)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={handleConfirmAiFood}
-                  className="w-full py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-500 transition"
+                  type="button"
+                  onClick={() => setEditAmountGrams((prev) => Math.max(10, prev - 25))}
+                  className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 font-bold hover:bg-zinc-200 dark:hover:bg-zinc-700 transition flex items-center justify-center shrink-0"
                 >
-                  Usar este alimento
+                  -
+                </button>
+                <input
+                  type="number"
+                  min="1"
+                  max="5000"
+                  value={editAmountGrams || ''}
+                  onChange={(e) => setEditAmountGrams(Math.max(1, Number(e.target.value) || 0))}
+                  className="flex-1 text-center py-2 px-3 bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm font-bold text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setEditAmountGrams((prev) => prev + 25)}
+                  className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 font-bold hover:bg-zinc-200 dark:hover:bg-zinc-700 transition flex items-center justify-center shrink-0"
+                >
+                  +
                 </button>
               </div>
-            )}
+            </div>
+
+            {/* 3. Previsualización de macros recalculados */}
+            {(() => {
+              const origAmount = editingLog.amount_g || 1;
+              const ratio = editAmountGrams > 0 ? editAmountGrams / origAmount : 1;
+              const calcCals = Math.round(editingLog.calories * ratio);
+              const calcProt = Number((editingLog.protein_g * ratio).toFixed(1));
+              const calcCarbs = Number((editingLog.carbs_g * ratio).toFixed(1));
+              const calcFat = Number((editingLog.fat_g * ratio).toFixed(1));
+              const calcFiber = Number(((editingLog.fiber_g || 0) * ratio).toFixed(1));
+
+              return (
+                <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3 rounded-2xl border border-zinc-100 dark:border-zinc-800/60">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                      Aporte recalculado:
+                    </span>
+                    <span className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400">
+                      {calcCals} kcal
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1 text-center text-[10px]">
+                    <div className="p-1.5 bg-white dark:bg-zinc-800 rounded-lg">
+                      <span className="text-zinc-400 block">Prot</span>
+                      <span className="font-bold text-zinc-800 dark:text-zinc-200">{calcProt}g</span>
+                    </div>
+                    <div className="p-1.5 bg-white dark:bg-zinc-800 rounded-lg">
+                      <span className="text-zinc-400 block">Carb</span>
+                      <span className="font-bold text-zinc-800 dark:text-zinc-200">{calcCarbs}g</span>
+                    </div>
+                    <div className="p-1.5 bg-white dark:bg-zinc-800 rounded-lg">
+                      <span className="text-zinc-400 block">Grasa</span>
+                      <span className="font-bold text-zinc-800 dark:text-zinc-200">{calcFat}g</span>
+                    </div>
+                    <div className="p-1.5 bg-white dark:bg-zinc-800 rounded-lg">
+                      <span className="text-zinc-400 block">Fibra</span>
+                      <span className="font-bold text-zinc-800 dark:text-zinc-200">{calcFiber}g</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Acciones */}
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingLog(null)}
+                className="flex-1 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEditLog}
+                disabled={isUpdatingLog}
+                className="flex-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 transition"
+              >
+                {isUpdatingLog ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Guardando...</span>
+                  </>
+                ) : (
+                  <span>Guardar Cambios</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
-
-      {/* MODAL ESCÁNER DE CÓDIGOS DE BARRAS (OPEN FOOD FACTS) */}
-      <BarcodeScannerModal
-        isOpen={isBarcodeScannerOpen}
-        onClose={() => setIsBarcodeScannerOpen(false)}
-        defaultMealType={activeMealType}
-        onFoodLogged={() => fetchLogs(selectedDate)}
-      />
     </div>
   );
 }

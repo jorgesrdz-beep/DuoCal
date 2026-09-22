@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -13,6 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { Food, MealType } from '@/types/database';
+import { getLocalDateString } from '@/lib/utils';
 
 interface BarcodeScannerModalProps {
   isOpen: boolean;
@@ -199,7 +200,7 @@ export default function BarcodeScannerModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: new Date().toISOString().split('T')[0],
+          date: getLocalDateString(),
           meal_type: selectedMealType,
           food_id: foundProduct.id,
           food_name: foundProduct.name + (foundProduct.brand ? ` (${foundProduct.brand})` : ''),

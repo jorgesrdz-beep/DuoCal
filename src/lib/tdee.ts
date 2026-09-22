@@ -291,6 +291,9 @@ export interface AdaptiveProgressInput {
 
 export interface AdaptiveProgressEvaluation {
   daysInPhase: number;
+  completeDaysCount: number;
+  partialDaysCount: number;
+  weighInsCount: number;
   recordedDaysCount: number;
   adherencePct: number;
   avgDailyCalories: number;
@@ -304,6 +307,7 @@ export interface AdaptiveProgressEvaluation {
   suggestedDeltaKcal: number;
   headline: string;
   diagnosisMessage: string;
+  completenessWarning?: string | null;
   recommendationPrompt: string | null;
 }
 
@@ -318,13 +322,28 @@ export function evaluateProgressAndSuggestAdjustment(
   const diffTime = Math.abs(now.getTime() - startDate.getTime());
   const daysInPhase = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
 
-  // Si tiene menos de 7 días o menos de 3 registros, no se pueden calcular promedios confiables
-  if (daysInPhase < 7 || weightHistory.length < 3) {
+  const target = goal.calorie_target || 2000;
+  // Umbral clínico para día con registro completo:
+  // Al menos 60% de la meta calórica o >= 900 kcal.
+  // Registrar 1 solo alimento (ej. 80 kcal o 200 kcal) se cataloga como parcial y no cuenta como día completo.
+  const completeCalorieThreshold = Math.max(900, Math.round(target * 0.60));
+
+  const completeFoodDays = calorieLogs.filter((l) => l.calories >= completeCalorieThreshold);
+  const partialFoodDays = calorieLogs.filter((l) => l.calories > 0 && l.calories < completeCalorieThreshold);
+  const completeDaysCount = completeFoodDays.length;
+  const partialDaysCount = partialFoodDays.length;
+  const weighInsCount = weightHistory.length;
+
+  // CASO 1: Sin días de registro completo de alimentos (0 días)
+  if (completeDaysCount === 0) {
     return {
       daysInPhase,
-      recordedDaysCount: weightHistory.length,
-      adherencePct: 100,
-      avgDailyCalories: goal.calorie_target,
+      completeDaysCount: 0,
+      partialDaysCount,
+      weighInsCount,
+      recordedDaysCount: 0,
+      adherencePct: 0,
+      avgDailyCalories: 0,
       initialWeight,
       currentRollingAvgWeight: weightHistory[0]?.weight_kg || initialWeight,
       previousRollingAvgWeight: null,
@@ -333,12 +352,50 @@ export function evaluateProgressAndSuggestAdjustment(
       status: 'insufficient_data',
       suggestedAction: 'maintain',
       suggestedDeltaKcal: 0,
-      headline: 'Recopilando datos iniciales',
-      diagnosisMessage: `Llevas ${daysInPhase} día(s) en esta fase. Se requieren al menos 7 a 14 días de registros continuos para evaluar la tendencia metabólica real sin sesgos de fluctuación de agua.`,
+      headline: 'Calibración Inicial: Sin registros de alimentos',
+      diagnosisMessage: `Actualmente tienes 0 días con registro completo de alimentos consumidos. El motor metabólico no asume datos ficticios: requiere registros reales y completos de tus comidas (desayuno, comida, cena) durante 7 a 14 días para evaluar tu gasto energético real sin sesgos.`,
+      completenessWarning: partialDaysCount > 0
+        ? `⚠️ Detectamos ${partialDaysCount} día(s) con registro parcial (menos de ${completeCalorieThreshold} kcal, ej. solo 1 alimento). Registrar alimentos aislados no permite evaluar tu metabolismo real y fue excluido del cálculo para no alterar erróneamente tus calorías.`
+        : `💡 Instar a registro completo: Registrar 1 solo alimento al día no sirve para calibrar tu metabolismo. Procura registrar tus comidas completas del día o usar el botón 'Registrar todo lo planeado' en 1 clic.`,
       recommendationPrompt: null,
     };
   }
 
+  // CASO 2: Menos de 7 días completos o menos de 3 pesajes
+  if (completeDaysCount < 7 || weighInsCount < 3) {
+    const avgCompleteCals = Math.round(
+      completeFoodDays.reduce((a, b) => a + b.calories, 0) / completeDaysCount
+    );
+    const calorieDiff = Math.abs(avgCompleteCals - target);
+    const diffPct = (calorieDiff / target) * 100;
+    const adherencePct = Math.max(0, Math.round(100 - diffPct));
+
+    return {
+      daysInPhase,
+      completeDaysCount,
+      partialDaysCount,
+      weighInsCount,
+      recordedDaysCount: completeDaysCount,
+      adherencePct,
+      avgDailyCalories: avgCompleteCals,
+      initialWeight,
+      currentRollingAvgWeight: weightHistory[0]?.weight_kg || initialWeight,
+      previousRollingAvgWeight: null,
+      weeklyChangeRatePct: 0,
+      weeklyChangeKg: 0,
+      status: 'insufficient_data',
+      suggestedAction: 'maintain',
+      suggestedDeltaKcal: 0,
+      headline: 'Fase de Calibración Inicial',
+      diagnosisMessage: `Llevas ${completeDaysCount} de 7 días mínimos con registro completo de alimentos (y ${weighInsCount} pesajes). Tu gasto metabólico se calibrará con rigor científico en cuanto alcances la semana completa de registros confiables.`,
+      completenessWarning: partialDaysCount > 0
+        ? `Detectamos ${partialDaysCount} día(s) con registros parciales (<${completeCalorieThreshold} kcal) que fueron excluidos del análisis para no subestimar tu gasto calórico.`
+        : null,
+      recommendationPrompt: null,
+    };
+  }
+
+  // CASO 3: Datos suficientes (>= 7 días completos y >= 3 pesajes)
   // Ordenar pesos descendentes por fecha
   const sortedWeights = [...weightHistory].sort(
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
@@ -361,17 +418,13 @@ export function evaluateProgressAndSuggestAdjustment(
     ((weeklyChangeKg / previousRollingAvgWeight) * 100).toFixed(2)
   );
 
-  // Evaluar Adherencia Calórica en los últimos 14 días
-  const validCalories = calorieLogs.map((l) => l.calories).filter((c) => c > 500);
-  const recordedDaysCount = validCalories.length;
-  const avgDailyCalories =
-    recordedDaysCount > 0
-      ? Math.round(validCalories.reduce((a, b) => a + b, 0) / recordedDaysCount)
-      : goal.calorie_target;
+  // Evaluar Adherencia Calórica usando EXCLUSIVAMENTE los días completos
+  const avgDailyCalories = Math.round(
+    completeFoodDays.reduce((a, b) => a + b.calories, 0) / completeDaysCount
+  );
 
-  // Adherencia: % de coincidencia respecto a la meta
-  const calorieDiff = Math.abs(avgDailyCalories - goal.calorie_target);
-  const diffPct = (calorieDiff / goal.calorie_target) * 100;
+  const calorieDiff = Math.abs(avgDailyCalories - target);
+  const diffPct = (calorieDiff / target) * 100;
   const adherencePct = Math.max(0, Math.round(100 - diffPct));
 
   // Diagnóstico Clínico
@@ -382,8 +435,8 @@ export function evaluateProgressAndSuggestAdjustment(
   let diagnosisMessage = '';
   let recommendationPrompt: string | null = null;
 
-  // 1. Si la adherencia es baja (< 75%) o hay menos de 4 días registrados por semana:
-  if (adherencePct < 75 || recordedDaysCount < 4) {
+  // 1. Si la adherencia es baja (< 75%) o hay menos de 4 días completos registrados por semana:
+  if (adherencePct < 75 || completeDaysCount < 4) {
     status = 'adherence_alert';
     suggestedAction = 'focus_adherence';
     suggestedDeltaKcal = 0;
@@ -392,7 +445,10 @@ export function evaluateProgressAndSuggestAdjustment(
     recommendationPrompt = 'Mantener la meta actual por 7 días más procurando registrar con mayor precisión.';
     return {
       daysInPhase,
-      recordedDaysCount,
+      completeDaysCount,
+      partialDaysCount,
+      weighInsCount,
+      recordedDaysCount: completeDaysCount,
       adherencePct,
       avgDailyCalories,
       initialWeight,
@@ -405,6 +461,9 @@ export function evaluateProgressAndSuggestAdjustment(
       suggestedDeltaKcal,
       headline,
       diagnosisMessage,
+      completenessWarning: partialDaysCount > 0
+        ? `Nota: Se detectaron ${partialDaysCount} día(s) con registros incompletos o parciales que no fueron computados.`
+        : null,
       recommendationPrompt,
     };
   }
@@ -482,7 +541,10 @@ export function evaluateProgressAndSuggestAdjustment(
 
   return {
     daysInPhase,
-    recordedDaysCount,
+    completeDaysCount,
+    partialDaysCount,
+    weighInsCount,
+    recordedDaysCount: completeDaysCount,
     adherencePct,
     avgDailyCalories,
     initialWeight,
@@ -495,6 +557,9 @@ export function evaluateProgressAndSuggestAdjustment(
     suggestedDeltaKcal,
     headline,
     diagnosisMessage,
+    completenessWarning: partialDaysCount > 0
+      ? `Nota: Se excluyeron ${partialDaysCount} día(s) con registros parciales/incompletos para proteger la precisión metabólica.`
+      : null,
     recommendationPrompt,
   };
 }

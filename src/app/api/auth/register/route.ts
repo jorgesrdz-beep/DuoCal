@@ -5,6 +5,7 @@ import { calculateGoalMacros } from '@/lib/tdee';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 import { GoalType } from '@/types/database';
+import { getLocalDateString } from '@/lib/utils';
 
 export async function POST(req: Request) {
   try {
@@ -113,7 +114,7 @@ export async function POST(req: Request) {
       id: crypto.randomUUID(),
       user_id: userId,
       goal_type,
-      start_date: new Date().toISOString().split('T')[0],
+      start_date: getLocalDateString(),
       end_date: null,
       suggested_duration_weeks: macros.suggested_duration_weeks,
       tdee_calculated: macros.tdee,

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getDb, insertRow } from '@/lib/store/mockDb';
+import { getDb, insertRow, deleteRow } from '@/lib/store/mockDb';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
-import { getWeekStartDate } from '@/lib/utils';
+import { getWeekStartDate, getSmartMealPrepWeekStartDate, getLocalDateString } from '@/lib/utils';
 import { ConsumptionSchedule, FrequencyType, MealType } from '@/types/database';
 
 export async function GET() {
@@ -35,13 +35,21 @@ export async function POST(req: Request) {
       frequency_type = 'weekdays' as FrequencyType,
       days_of_week = [1, 2, 3, 4, 5],
       batch_total_servings,
-      week_start_date = getWeekStartDate(),
+      week_start_date,
+      also_for_partner = false,
     } = body;
+
+    const user = db.profiles.find((p) => p.id === userId);
+    const partner = db.profiles.find(
+      (p) => user?.household_id && p.household_id === user.household_id && p.id !== userId
+    );
 
     const dish = db.dishes.find((d) => d.id === dish_id);
     if (!dish) {
       return NextResponse.json({ error: 'Platillo no encontrado' }, { status: 404 });
     }
+
+    const targetWeek = week_start_date || getSmartMealPrepWeekStartDate();
 
     // 1. Crear registro de regla de consumo
     const newSchedule: ConsumptionSchedule = {
@@ -54,7 +62,7 @@ export async function POST(req: Request) {
       days_of_week,
       batch_total_servings: batch_total_servings || dish.total_servings,
       batch_servings_remaining: batch_total_servings || dish.total_servings,
-      start_date: new Date().toISOString().split('T')[0],
+      start_date: getLocalDateString(),
       end_date: null,
       is_active: true,
       created_at: new Date().toISOString(),
@@ -73,38 +81,59 @@ export async function POST(req: Request) {
       targetDays = days_of_week;
     } else if (frequency_type === 'meal_prep_batch') {
       // Repartir N porciones en días hábiles consecutivos
-      const servings = Math.min(7, batch_total_servings || dish.total_servings);
+      const servings = Math.min(7, Number(batch_total_servings) || dish.total_servings);
       for (let i = 1; i <= servings; i++) {
         targetDays.push(i);
       }
     }
 
-    let addedToPlan = 0;
-    for (const day of targetDays) {
-      const newPlanItem = {
-        id: crypto.randomUUID(),
-        user_id: userId,
-        week_start_date,
-        day_of_week: day,
-        meal_type,
-        food_id: null,
-        custom_name: `${dish.name} (1 ${dish.serving_name})`,
-        servings: 1,
-        calories: dish.calories_per_serving,
-        protein_g: dish.protein_per_serving,
-        carbs_g: dish.carbs_per_serving,
-        fat_g: dish.fat_per_serving,
-        created_at: new Date().toISOString(),
-      };
-      await insertRow('meal_plans', newPlanItem);
-      addedToPlan++;
+    const userIdsToPlan = [userId];
+    if (also_for_partner && partner) {
+      userIdsToPlan.push(partner.id);
     }
+
+    // Limpiar planes anteriores de este mismo platillo para evitar duplicados o residuos en la semana actual/siguiente
+    const cleanPrefix = `${dish.name.trim().toLowerCase()} (`;
+    const toRemove = db.meal_plans.filter(
+      (p) =>
+        userIdsToPlan.includes(p.user_id) &&
+        (p.week_start_date === targetWeek || (targetWeek !== getWeekStartDate() && p.week_start_date === getWeekStartDate())) &&
+        (p.custom_name.trim().toLowerCase().startsWith(cleanPrefix) || p.custom_name.trim().toLowerCase() === dish.name.trim().toLowerCase())
+    );
+    for (const old of toRemove) {
+      await deleteRow('meal_plans', old.id);
+    }
+
+    let addedToPlan = 0;
+    for (const targetUserId of userIdsToPlan) {
+      for (const day of targetDays) {
+        const newPlanItem = {
+          id: crypto.randomUUID(),
+          user_id: targetUserId,
+          week_start_date: targetWeek,
+          day_of_week: day,
+          meal_type,
+          food_id: null,
+          custom_name: `${dish.name} (1 ${dish.serving_name})`,
+          servings: 1,
+          calories: dish.calories_per_serving,
+          protein_g: dish.protein_per_serving,
+          carbs_g: dish.carbs_per_serving,
+          fat_g: dish.fat_per_serving,
+          created_at: new Date().toISOString(),
+        };
+        await insertRow('meal_plans', newPlanItem);
+        addedToPlan++;
+      }
+    }
+
+    const partnerNotice = also_for_partner && partner ? ` (incluyendo el plan de ${partner.display_name})` : '';
 
     return NextResponse.json({
       success: true,
       schedule: newSchedule,
       addedToPlan,
-      message: `Se programó el platillo para ${addedToPlan} día(s) en tu plan semanal.`,
+      message: `Se programaron ${targetDays.length} comida(s) en tu plan semanal${partnerNotice}.`,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al programar frecuencia';

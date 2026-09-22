@@ -294,9 +294,24 @@ export default function RecipeImportModal({
 
         {/* ALERTA DE ERROR */}
         {errorMsg && (
-          <div className="mx-5 mt-3 p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-2xl flex items-center gap-2 text-xs text-red-700 dark:text-red-300">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <p className="leading-snug">{errorMsg}</p>
+          <div className="mx-5 mt-3 p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-2xl flex items-start gap-2.5 text-xs text-red-700 dark:text-red-300">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="leading-snug font-medium">{errorMsg}</p>
+              {tab === 'url' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorMsg(null);
+                    setTab('text');
+                  }}
+                  className="mt-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                >
+                  <span>¿Deseas pegar el texto o ingredientes de la receta? Haz clic aquí</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           </div>
         )}
 

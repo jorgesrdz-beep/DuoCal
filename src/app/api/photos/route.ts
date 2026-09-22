@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/store/mockDb';
 import crypto from 'crypto';
+import { getLocalDateString } from '@/lib/utils';
 
 // En memoria guardamos las fotos del usuario
 const photoStore: Array<{
@@ -74,7 +75,7 @@ export async function POST(req: Request) {
     const newPhoto = {
       id: 'photo-' + crypto.randomUUID().slice(0, 8),
       user_id: userId,
-      date: date || new Date().toISOString().split('T')[0],
+      date: date || getLocalDateString(),
       data_url,
       pose: pose as 'front' | 'side' | 'back' | 'other',
       notes: notes || null,

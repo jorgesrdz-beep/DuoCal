@@ -14,8 +14,8 @@ export default function BottomNav({ currentTab, onSelectTab }: BottomNavProps) {
   const tabs: { id: TabType; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'dashboard', label: 'Resumen', icon: Home },
     { id: 'diary', label: 'Diario', icon: Utensils },
+    { id: 'planner', label: 'Plan Semanal', icon: CalendarDays },
     { id: 'dishes', label: 'Platillos', icon: ChefHat },
-    { id: 'planner', label: 'Plan', icon: CalendarDays },
     { id: 'photos', label: 'Fotos', icon: Camera },
     { id: 'settings', label: 'Ajustes', icon: Settings },
   ];

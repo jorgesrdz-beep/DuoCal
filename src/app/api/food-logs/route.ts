@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
-import { getDb, insertRow, deleteRow } from '@/lib/store/mockDb';
+import { getDb, insertRow, updateRow, deleteRow } from '@/lib/store/mockDb';
+import { isServiceRoleConfigured, supabaseAdmin } from '@/lib/supabase/admin';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
+import { getLocalDateString } from '@/lib/utils';
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    const date = searchParams.get('date') || getLocalDateString();
     const startDate = searchParams.get('start_date');
     const endDate = searchParams.get('end_date');
 
@@ -67,12 +69,27 @@ export async function POST(req: Request) {
 
     const db = await getDb();
 
+    // Validar si food_id realmente existe en Supabase antes de enlazar la FK
+    let validFoodId: string | null = null;
+    if (food_id && isServiceRoleConfigured) {
+      try {
+        const { data: foodRow } = await supabaseAdmin
+          .from('foods')
+          .select('id')
+          .eq('id', food_id)
+          .maybeSingle();
+        if (foodRow) validFoodId = foodRow.id;
+      } catch {
+        validFoodId = null;
+      }
+    }
+
     const newLog = {
       id: crypto.randomUUID(),
       user_id: userId,
-      date: date || new Date().toISOString().split('T')[0],
+      date: date || getLocalDateString(),
       meal_type: meal_type || 'lunch',
-      food_id: food_id || null,
+      food_id: validFoodId,
       food_name: food_name.trim(),
       amount_g: Number(amount_g),
       calories: Math.round(Number(calories)),
@@ -88,6 +105,44 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, log: newLog });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al registrar comida';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function PUT(req: Request) {
+  try {
+    const cookieStore = await cookies();
+    const userId = cookieStore.get('duocal_session')?.value;
+    if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+
+    const body = await req.json();
+    const { id, meal_type, amount_g, calories, protein_g, carbs_g, fat_g, fiber_g, food_name } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: 'ID requerido' }, { status: 400 });
+    }
+
+    const db = await getDb();
+    const existing = db.food_logs.find((l) => l.id === id && l.user_id === userId);
+    if (!existing) {
+      return NextResponse.json({ error: 'Registro no encontrado' }, { status: 404 });
+    }
+
+    const updates: Record<string, any> = {};
+    if (meal_type) updates.meal_type = meal_type;
+    if (amount_g !== undefined) updates.amount_g = Number(amount_g);
+    if (calories !== undefined) updates.calories = Math.round(Number(calories));
+    if (protein_g !== undefined) updates.protein_g = Number(Number(protein_g).toFixed(1));
+    if (carbs_g !== undefined) updates.carbs_g = Number(Number(carbs_g).toFixed(1));
+    if (fat_g !== undefined) updates.fat_g = Number(Number(fat_g).toFixed(1));
+    if (fiber_g !== undefined) updates.fiber_g = Number(Number(fiber_g).toFixed(1));
+    if (food_name) updates.food_name = food_name.trim();
+
+    await updateRow('food_logs', id, updates);
+
+    return NextResponse.json({ success: true, updated: { ...existing, ...updates } });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Error al actualizar registro';
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -115,3 +170,4 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+

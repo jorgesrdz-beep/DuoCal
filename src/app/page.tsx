@@ -38,8 +38,8 @@ export default function Home() {
       <main className="flex-1 max-w-lg w-full mx-auto px-4 pt-4 pb-20">
         {currentTab === 'dashboard' && <WeeklyBalanceCard />}
         {currentTab === 'diary' && <DailyDiary />}
-        {currentTab === 'dishes' && <DishManager />}
         {currentTab === 'planner' && <WeeklyPlanner />}
+        {currentTab === 'dishes' && <DishManager />}
         {currentTab === 'photos' && <PhotoTracker />}
         {currentTab === 'settings' && <GoalManager />}
       </main>

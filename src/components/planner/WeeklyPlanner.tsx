@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import {
   Copy,
@@ -28,10 +28,13 @@ import {
   BookOpen,
   Utensils,
   ChevronRight,
+  ChevronLeft,
+  AlertCircle,
 } from 'lucide-react';
 import { MealType, ShoppingListItem, Dish, Food } from '@/types/database';
-import { getWeekStartDate, getDayOfWeekName } from '@/lib/utils';
+import { getWeekStartDate, getNextWeekStartDate, getSmartMealPrepWeekStartDate, formatWeekDateRange, getDayOfWeekName, shiftDateDays, getLocalDateString } from '@/lib/utils';
 import { STARTER_RECIPES } from '@/lib/data/starterRecipes';
+import RecipeDetailModal from '@/components/dishes/RecipeDetailModal';
 
 const MEAL_LABELS: Record<MealType, string> = {
   breakfast: 'Desayuno',
@@ -42,7 +45,7 @@ const MEAL_LABELS: Record<MealType, string> = {
 
 export default function WeeklyPlanner() {
   const { activeGoal, household } = useAuth();
-  const [weekStart, setWeekStart] = useState(() => getWeekStartDate());
+  const [weekStart, setWeekStart] = useState(() => getSmartMealPrepWeekStartDate());
   const [selectedDay, setSelectedDay] = useState(1); // 1 = Lunes
   const [plans, setPlans] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,10 +61,13 @@ export default function WeeklyPlanner() {
   const [customItemQty, setCustomItemQty] = useState('');
   const [customItemCategory, setCustomItemCategory] = useState('Abarrotes y Granos');
   const [copiedToast, setCopiedToast] = useState(false);
+  const [isGeneratingShopping, setIsGeneratingShopping] = useState(false);
+  const [shoppingToast, setShoppingToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Catálogo de platillos cargados
   const [dishes, setDishes] = useState<Dish[]>([]);
   const [loadingDishes, setLoadingDishes] = useState(false);
+  const [selectedPlanDishForModal, setSelectedPlanDishForModal] = useState<Dish | null>(null);
 
   // Modal para añadir comida al plan (Selector Inteligente de Platillos)
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -85,9 +91,12 @@ export default function WeeklyPlanner() {
   const [mealCarbs, setMealCarbs] = useState(45);
   const [mealFat, setMealFat] = useState(12);
 
-  // Modal para duplicar día (L-V)
+  // Modal para duplicar día (Meal Prep)
   const [isDuplicateOpen, setIsDuplicateOpen] = useState(false);
-  const [targetDays, setTargetDays] = useState<number[]>([2, 3, 4, 5]); // Martes a Viernes
+  const [targetDays, setTargetDays] = useState<number[]>([2, 3, 4, 5]);
+  const [duplicateLoading, setDuplicateLoading] = useState(false);
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [duplicateSuccess, setDuplicateSuccess] = useState<string | null>(null);
 
   const fetchPlans = async () => {
     setLoading(true);
@@ -220,6 +229,23 @@ export default function WeeklyPlanner() {
       });
 
       if (res.ok) {
+        // Si es una plantilla de la biblioteca curada y no está en Mis Platillos,
+        // la clonamos automáticamente para que el usuario pueda consultarla y escalarla desde Platillos
+        if (dish.is_starter_template) {
+          const alreadySaved = dishes.some(
+            (d) => d.name.toLowerCase().trim() === dish.name.toLowerCase().trim()
+          );
+          if (!alreadySaved) {
+            fetch('/api/dishes/templates', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ templateId: dish.id, servings: 1 }),
+            })
+              .then(() => fetchDishes())
+              .catch(() => {});
+          }
+        }
+
         await fetchPlans();
         setIsAddOpen(false);
       }
@@ -228,24 +254,124 @@ export default function WeeklyPlanner() {
     }
   };
 
-  const handleSearchFoodsInPlanner = async (q: string) => {
+  const handleOpenPlanRecipe = (item: any) => {
+    const rawMealName = item.custom_name.trim();
+    const baseMealName = rawMealName.replace(/\s*\(.*$/, '').trim().toLowerCase();
+
+    const matched =
+      dishes.find(
+        (d) =>
+          (item.food_id && d.id === item.food_id) ||
+          d.name.toLowerCase().trim() === baseMealName ||
+          d.name.toLowerCase().includes(baseMealName) ||
+          baseMealName.includes(d.name.toLowerCase().trim())
+      ) ||
+      STARTER_RECIPES.find(
+        (s) =>
+          (item.food_id && s.id === item.food_id) ||
+          s.name.toLowerCase().trim() === baseMealName ||
+          s.name.toLowerCase().includes(baseMealName) ||
+          baseMealName.includes(s.name.toLowerCase().trim())
+      );
+
+    if (matched) {
+      setSelectedPlanDishForModal(matched);
+    } else {
+      const s = item.servings || 1;
+      const cals = item.calories || 0;
+      const prot = item.protein_g || 0;
+      const carbs = item.carbs_g || 0;
+      const fat = item.fat_g || 0;
+      const fiber = item.fiber_g || 0;
+      setSelectedPlanDishForModal({
+        id: item.food_id || item.id,
+        user_id: '',
+        household_id: null,
+        name: rawMealName.replace(/\s*\(.*$/, '').trim() || item.custom_name,
+        description: null,
+        category: (item.meal_type || 'general') as any,
+        total_servings: s,
+        total_weight_g: null,
+        serving_name: 'porción',
+        is_shared_with_partner: false,
+        prep_time_minutes: 15,
+        cook_time_minutes: 0,
+        instructions: [
+          'Preparar según tus cantidades planeadas.',
+          'Consumir o empacar para meal prep refrigerando en recipiente hermético.'
+        ],
+        total_calories: cals,
+        total_protein_g: prot,
+        total_carbs_g: carbs,
+        total_fat_g: fat,
+        total_fiber_g: fiber,
+        calories_per_serving: Math.round(cals / s),
+        protein_per_serving: Number((prot / s).toFixed(1)),
+        carbs_per_serving: Number((carbs / s).toFixed(1)),
+        fat_per_serving: Number((fat / s).toFixed(1)),
+        fiber_per_serving: Number((fiber / s).toFixed(1)),
+        ingredients: [
+          {
+            id: 'fallback-ing',
+            dish_id: item.food_id || item.id,
+            food_id: null,
+            ingredient_name: rawMealName,
+            amount_g: s * 100,
+            calories: cals,
+            protein_g: prot,
+            carbs_g: carbs,
+            fat_g: fat,
+            created_at: new Date().toISOString(),
+          },
+        ],
+        created_at: new Date().toISOString(),
+      });
+    }
+  };
+
+  const plannerSearchAbortRef = useRef<AbortController | null>(null);
+  const plannerSearchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleSearchFoodsInPlanner = (q: string) => {
     setFoodSearchQuery(q);
+
+    if (plannerSearchTimeoutRef.current) {
+      clearTimeout(plannerSearchTimeoutRef.current);
+    }
+    if (plannerSearchAbortRef.current) {
+      plannerSearchAbortRef.current.abort();
+      plannerSearchAbortRef.current = null;
+    }
+
     if (!q.trim()) {
       setFoodSearchResults([]);
+      setSearchingFoods(false);
       return;
     }
+
     setSearchingFoods(true);
-    try {
-      const res = await fetch(`/api/foods/search?q=${encodeURIComponent(q)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setFoodSearchResults(data.foods || []);
+    plannerSearchTimeoutRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      plannerSearchAbortRef.current = controller;
+
+      try {
+        const res = await fetch(`/api/foods/search?q=${encodeURIComponent(q.trim())}`, {
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setFoodSearchResults(data.foods || []);
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          // Ignorar cancelaciones
+        }
+      } finally {
+        if (plannerSearchAbortRef.current === controller) {
+          setSearchingFoods(false);
+        }
       }
-    } catch {
-      // Ignorar
-    } finally {
-      setSearchingFoods(false);
-    }
+    }, 220);
   };
 
   const handleAddFoodToPlan = async () => {
@@ -326,7 +452,25 @@ export default function WeeklyPlanner() {
     }
   };
 
+  const handleOpenDuplicateModal = () => {
+    // Por defecto sugerir los demás días entre semana (L-V) si es día de semana, o toda la semana
+    const remainingWeekdays = [1, 2, 3, 4, 5].filter((d) => d !== selectedDay);
+    setTargetDays(remainingWeekdays.length > 0 ? remainingWeekdays : [1, 2, 3, 4, 5, 6, 7].filter((d) => d !== selectedDay));
+    setDuplicateError(null);
+    setDuplicateSuccess(null);
+    setIsDuplicateOpen(true);
+  };
+
   const handleDuplicateToWeekdays = async () => {
+    if (targetDays.length === 0) {
+      setDuplicateError('Por favor selecciona al menos un día destino.');
+      return;
+    }
+
+    setDuplicateLoading(true);
+    setDuplicateError(null);
+    setDuplicateSuccess(null);
+
     try {
       const res = await fetch('/api/meal-plans/duplicate', {
         method: 'POST',
@@ -338,12 +482,23 @@ export default function WeeklyPlanner() {
         }),
       });
 
-      if (res.ok) {
-        await fetchPlans();
-        setIsDuplicateOpen(false);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setDuplicateError(data.error || 'Error al duplicar el plan.');
+        return;
       }
+
+      setDuplicateSuccess(data.message || '¡Plan replicado con éxito!');
+      await fetchPlans();
+      setTimeout(() => {
+        setIsDuplicateOpen(false);
+        setDuplicateSuccess(null);
+      }, 700);
     } catch {
-      // Ignorar
+      setDuplicateError('Error de red al intentar duplicar el plan.');
+    } finally {
+      setDuplicateLoading(false);
     }
   };
 
@@ -453,17 +608,34 @@ export default function WeeklyPlanner() {
   };
 
   const handleGenerateShoppingList = async () => {
+    setIsGeneratingShopping(true);
     try {
       const res = await fetch('/api/meal-plans/shopping-list', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'generate_from_plan', week_start_date: weekStart }),
       });
+      const data = await res.json();
       if (res.ok) {
-        fetchShoppingList();
+        await fetchShoppingList();
+        setShoppingToast({
+          message: data.message || `¡Lista generada con éxito! Se consolidaron ${data.items?.length || 0} artículos.`,
+          type: 'success',
+        });
+      } else {
+        setShoppingToast({
+          message: data.error || 'No se pudo generar la lista de compras.',
+          type: 'error',
+        });
       }
     } catch {
-      // Ignorar
+      setShoppingToast({
+        message: 'Ocurrió un error al conectar con el servidor.',
+        type: 'error',
+      });
+    } finally {
+      setIsGeneratingShopping(false);
+      setTimeout(() => setShoppingToast(null), 4000);
     }
   };
 
@@ -501,6 +673,46 @@ export default function WeeklyPlanner() {
 
       {viewMode === 'planner' ? (
         <div className="space-y-4">
+          {/* Navegador de Semanas */}
+          <div className="flex items-center justify-between bg-white dark:bg-zinc-900 p-2.5 px-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setWeekStart(shiftDateDays(weekStart, -7));
+              }}
+              className="p-1.5 px-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-semibold transition flex items-center gap-1 active:scale-95"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Semana Anterior</span>
+              <span className="sm:hidden">Anterior</span>
+            </button>
+
+            <div className="text-center">
+              <span className="font-bold text-zinc-900 dark:text-white block text-xs sm:text-sm">
+                {formatWeekDateRange(weekStart)}
+              </span>
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                {weekStart === getWeekStartDate()
+                  ? 'Semana en curso'
+                  : weekStart === getNextWeekStartDate()
+                  ? '✨ Próxima semana (Meal Prep)'
+                  : `Semana del ${weekStart}`}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setWeekStart(shiftDateDays(weekStart, 7));
+              }}
+              className="p-1.5 px-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-semibold transition flex items-center gap-1 active:scale-95"
+            >
+              <span className="hidden sm:inline">Semana Siguiente</span>
+              <span className="sm:hidden">Siguiente</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
           {/* Días de la semana (1 al 7) */}
           <div className="grid grid-cols-7 gap-1 bg-white dark:bg-zinc-900 p-2 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm text-center">
             {[1, 2, 3, 4, 5, 6, 7].map((dayIdx) => {
@@ -522,7 +734,7 @@ export default function WeeklyPlanner() {
                     {getDayOfWeekName(dayIdx).slice(0, 3)}
                   </span>
                   <span className={`text-[9px] mt-0.5 ${isSelected ? 'text-emerald-100' : 'text-zinc-400'}`}>
-                    {isWeekend ? 'Libre' : `${count} com.`}
+                    {count > 0 ? `${count} com.` : isWeekend ? 'Libre' : '0 com.'}
                   </span>
                 </button>
               );
@@ -549,7 +761,7 @@ export default function WeeklyPlanner() {
 
             {/* Botón Duplicar día a entre semana */}
             <button
-              onClick={() => setIsDuplicateOpen(true)}
+              onClick={handleOpenDuplicateModal}
               className="flex items-center gap-1 text-xs font-semibold bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 px-3 py-2 rounded-xl transition"
             >
               <Copy className="w-3.5 h-3.5 text-emerald-500" />
@@ -603,22 +815,39 @@ export default function WeeklyPlanner() {
                       {items.map((item) => (
                         <div
                           key={item.id}
-                          className="flex items-center justify-between p-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 text-xs"
+                          className="flex items-center justify-between p-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 border border-transparent hover:border-emerald-500/30 transition text-xs gap-2"
                         >
-                          <div>
-                            <span className="font-semibold text-zinc-900 dark:text-white block">
+                          <div
+                            onClick={() => handleOpenPlanRecipe(item)}
+                            className="flex-1 min-w-0 cursor-pointer group"
+                            title="Haz clic para ver ingredientes, medidas y escalar receta"
+                          >
+                            <span className="font-semibold text-zinc-900 dark:text-white block truncate group-hover:text-emerald-600 transition">
                               {item.custom_name}
                             </span>
                             <span className="text-[10px] text-zinc-400">
                               {item.calories} kcal • P {item.protein_g}g • C {item.carbs_g}g • G {item.fat_g}g
                             </span>
                           </div>
-                          <button
-                            onClick={() => handleDeletePlan(item.id)}
-                            className="text-zinc-400 hover:text-red-500 p-1"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => handleOpenPlanRecipe(item)}
+                              className="px-2.5 py-1 bg-emerald-100/80 hover:bg-emerald-200 dark:bg-emerald-950/70 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 font-bold rounded-lg text-[10px] flex items-center gap-1 transition shadow-2xs"
+                              title="Ver receta, cantidades para preparar e instrucciones de cocina"
+                            >
+                              <ChefHat className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                              <span>Cocinar</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleDeletePlan(item.id)}
+                              className="text-zinc-400 hover:text-red-500 p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition"
+                              title="Eliminar del plan"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -626,6 +855,38 @@ export default function WeeklyPlanner() {
                 </div>
               );
             })}
+          </div>
+
+          {/* Acceso rápido para autogenerar lista de compras desde la vista del plan */}
+          <div className="bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-emerald-500/5 dark:from-emerald-950/40 dark:to-teal-950/20 border border-emerald-500/20 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-3 text-left w-full sm:w-auto">
+              <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-xs shrink-0">
+                <ShoppingCart className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                  ¿Listo para hacer las compras de la semana?
+                </p>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {shoppingList.length > 0
+                    ? `Tienes ${shoppingList.length} artículos en la lista. Puedes autogenerar de nuevo para sincronizar.`
+                    : 'Extrae automáticamente los ingredientes de la semana organizados por pasillo.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <button
+                onClick={async () => {
+                  await handleGenerateShoppingList();
+                  setViewMode('shopping');
+                }}
+                disabled={isGeneratingShopping}
+                className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-xs transition"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingShopping ? 'animate-spin' : ''}`} />
+                <span>{isGeneratingShopping ? 'Consolidando...' : 'Autogenerar Carrito de Súper'}</span>
+              </button>
+            </div>
           </div>
         </div>
       ) : (
@@ -636,6 +897,22 @@ export default function WeeklyPlanner() {
             <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-zinc-900 text-white dark:bg-emerald-600 px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 text-xs font-bold border border-zinc-700">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 dark:text-white shrink-0" />
               <span>¡Lista copiada al portapapeles! Lista para pegar en WhatsApp 📲</span>
+            </div>
+          )}
+
+          {/* TOAST DE NOTIFICACIÓN DE LISTA DE COMPRAS */}
+          {shoppingToast && (
+            <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 text-xs font-bold border transition-all ${
+              shoppingToast.type === 'success'
+                ? 'bg-emerald-600 text-white border-emerald-500 shadow-emerald-900/20'
+                : 'bg-red-600 text-white border-red-500 shadow-red-900/20'
+            }`}>
+              {shoppingToast.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-white shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-white shrink-0" />
+              )}
+              <span>{shoppingToast.message}</span>
             </div>
           )}
 
@@ -665,11 +942,12 @@ export default function WeeklyPlanner() {
 
                 <button
                   onClick={handleGenerateShoppingList}
-                  className="flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold px-2.5 py-1.5 rounded-xl transition"
+                  disabled={isGeneratingShopping}
+                  className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold px-3 py-1.5 rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed shadow-xs active:scale-95"
                   title="Consolidar automáticamente desde lo planeado en la semana"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Autogenerar</span>
+                  <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingShopping ? 'animate-spin text-emerald-600' : ''}`} />
+                  <span>{isGeneratingShopping ? 'Generando...' : 'Autogenerar'}</span>
                 </button>
 
                 {shoppingList.length > 0 && (
@@ -778,14 +1056,31 @@ export default function WeeklyPlanner() {
 
             {/* LISTADO DE PRODUCTOS AGRUPADOS POR PASILLO */}
             {shoppingList.length === 0 ? (
-              <div className="text-center py-8 text-zinc-400 text-xs">
-                <ShoppingCart className="w-9 h-9 mx-auto mb-2 opacity-35" />
-                <p className="font-semibold text-zinc-700 dark:text-zinc-300">
-                  Tu lista de compras está vacía.
+              <div className="text-center py-10 px-4 text-zinc-400 text-xs">
+                <ShoppingCart className="w-12 h-12 mx-auto mb-3 opacity-30 text-emerald-500" />
+                <p className="font-bold text-sm text-zinc-700 dark:text-zinc-200">
+                  Tu lista de compras está vacía
                 </p>
-                <p className="text-[11px] mt-1 max-w-xs mx-auto">
-                  Haz clic en &ldquo;Autogenerar&rdquo; para extraer los ingredientes del plan semanal o usa &ldquo;+ Producto&rdquo; para agregar cosas al vuelo.
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 max-w-sm mx-auto leading-relaxed">
+                  Autogenera los ingredientes consolidados de tus platillos del plan semanal o agrega productos individuales directamente.
                 </p>
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    onClick={handleGenerateShoppingList}
+                    disabled={isGeneratingShopping}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl shadow-md transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingShopping ? 'animate-spin' : ''}`} />
+                    <span>{isGeneratingShopping ? 'Extrayendo ingredientes...' : 'Autogenerar desde el Plan Semanal'}</span>
+                  </button>
+                  <button
+                    onClick={() => setIsAddCustomItemOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-xs font-semibold rounded-xl transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Agregar producto manual</span>
+                  </button>
+                </div>
               </div>
             ) : (
               (() => {
@@ -984,59 +1279,190 @@ export default function WeeklyPlanner() {
         </div>
       )}
 
-      {/* MODAL DUPLICAR DÍA (Patrón entre-semana repetido) */}
+      {/* MODAL DUPLICAR DÍA (Patrón Meal Prep / Replicar plan) */}
       {isDuplicateOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-zinc-900 w-full max-w-sm rounded-3xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-2xl">
-            <h3 className="text-sm font-bold text-zinc-900 dark:text-white mb-2">
-              Duplicar plan de {getDayOfWeekName(selectedDay)}
-            </h3>
-            <p className="text-xs text-zinc-500 mb-4">
-              Copia automáticamente el desayuno, comida y cena de este día hacia otros días de la semana:
-            </p>
+            <div className="flex items-start justify-between mb-2">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
+                  <Copy className="w-4 h-4 text-emerald-500" />
+                  <span>Meal Prep: Duplicar {getDayOfWeekName(selectedDay)}</span>
+                </h3>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Copia el desayuno, comida, cena y snacks de este día:
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDuplicateOpen(false)}
+                className="w-7 h-7 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-            <div className="space-y-2 mb-5">
+            {/* Verificación de comidas existentes en el día origen */}
+            {(() => {
+              const currentDayPlans = plans.filter((p) => p.day_of_week === selectedDay);
+              const totalCals = currentDayPlans.reduce((sum, item) => sum + (item.calories || 0), 0);
+
+              if (currentDayPlans.length === 0) {
+                return (
+                  <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-2xl mb-4">
+                    <div className="flex items-start gap-2">
+                      <span className="text-base leading-none">⚠️</span>
+                      <div className="text-xs">
+                        <span className="font-bold text-amber-800 dark:text-amber-200 block">
+                          Sin comidas planeadas
+                        </span>
+                        <p className="text-zinc-600 dark:text-zinc-300 text-[11px] mt-0.5">
+                          El {getDayOfWeekName(selectedDay)} aún no tiene alimentos asignados. Agrega platillos a este día antes de duplicarlo para tu Meal Prep.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="p-2.5 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/50 mb-3 flex items-center justify-between text-xs">
+                  <div>
+                    <span className="font-bold text-emerald-800 dark:text-emerald-300">
+                      {currentDayPlans.length} {currentDayPlans.length === 1 ? 'comida' : 'comidas'} a copiar
+                    </span>
+                    <span className="text-[10px] text-zinc-500 dark:text-zinc-400 block truncate max-w-[190px]">
+                      {currentDayPlans.map((p) => p.custom_name).join(', ')}
+                    </span>
+                  </div>
+                  <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 shrink-0">
+                    {totalCals} kcal
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* Mensajes de error o éxito */}
+            {duplicateError && (
+              <div className="p-2.5 mb-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/60 rounded-xl text-red-700 dark:text-red-300 text-xs">
+                {duplicateError}
+              </div>
+            )}
+            {duplicateSuccess && (
+              <div className="p-2.5 mb-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-emerald-700 dark:text-emerald-300 text-xs font-bold flex items-center gap-1.5">
+                <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>{duplicateSuccess}</span>
+              </div>
+            )}
+
+            {/* Botones de selección rápida */}
+            <div className="flex items-center gap-1.5 mb-2.5">
+              <span className="text-[11px] text-zinc-400 font-medium">Días destino:</span>
+              <div className="flex items-center gap-1 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setTargetDays([1, 2, 3, 4, 5].filter((d) => d !== selectedDay))}
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition"
+                >
+                  Lunes-Viernes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTargetDays([1, 2, 3, 4, 5, 6, 7].filter((d) => d !== selectedDay))}
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition"
+                >
+                  Toda la sem.
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTargetDays([])}
+                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition"
+                >
+                  Limpiar
+                </button>
+              </div>
+            </div>
+
+            {/* Lista dinámica de todos los días de la semana excepto el día fuente actual */}
+            <div className="space-y-1.5 mb-5 max-h-56 overflow-y-auto pr-0.5">
               {[
+                { day: 1, label: 'Lunes' },
                 { day: 2, label: 'Martes' },
                 { day: 3, label: 'Miércoles' },
                 { day: 4, label: 'Jueves' },
                 { day: 5, label: 'Viernes' },
                 { day: 6, label: 'Sábado' },
-              ].map(({ day, label }) => {
-                const checked = targetDays.includes(day);
-                return (
-                  <label
-                    key={day}
-                    className="flex items-center justify-between p-2 rounded-xl bg-zinc-50 dark:bg-zinc-800 cursor-pointer text-xs"
-                  >
-                    <span className="text-zinc-800 dark:text-zinc-200 font-medium">{label}</span>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => {
-                        setTargetDays((prev) =>
-                          checked ? prev.filter((d) => d !== day) : [...prev, day]
-                        );
-                      }}
-                      className="rounded accent-emerald-600 w-4 h-4"
-                    />
-                  </label>
-                );
-              })}
+                { day: 7, label: 'Domingo' },
+              ]
+                .filter((item) => item.day !== selectedDay)
+                .map(({ day, label }) => {
+                  const checked = targetDays.includes(day);
+                  const isWeekend = day >= 6;
+                  return (
+                    <label
+                      key={day}
+                      className={`flex items-center justify-between p-2.5 rounded-2xl border transition cursor-pointer text-xs ${
+                        checked
+                          ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'
+                          : 'bg-zinc-50 dark:bg-zinc-800/60 border-zinc-200/80 dark:border-zinc-700/60 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setTargetDays((prev) =>
+                              checked ? prev.filter((d) => d !== day) : [...prev, day]
+                            );
+                            setDuplicateError(null);
+                          }}
+                          className="rounded-md accent-emerald-600 w-4 h-4 cursor-pointer"
+                        />
+                        <span className="text-zinc-900 dark:text-white font-medium">{label}</span>
+                      </div>
+                      {isWeekend && (
+                        <span className="text-[9px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-medium">
+                          Fin de semana
+                        </span>
+                      )}
+                    </label>
+                  );
+                })}
             </div>
 
+            {/* Botones de acción */}
             <div className="flex gap-2">
               <button
+                type="button"
                 onClick={() => setIsDuplicateOpen(false)}
-                className="flex-1 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-600 dark:text-zinc-300"
+                className="flex-1 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
               >
                 Cancelar
               </button>
               <button
+                type="button"
+                disabled={
+                  duplicateLoading ||
+                  targetDays.length === 0 ||
+                  plans.filter((p) => p.day_of_week === selectedDay).length === 0
+                }
                 onClick={handleDuplicateToWeekdays}
-                className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold shadow-md shadow-emerald-600/20"
+                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-1.5"
               >
-                Duplicar
+                {duplicateLoading ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Replicando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>
+                      Duplicar ({targetDays.length} {targetDays.length === 1 ? 'día' : 'días'})
+                    </span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -1087,7 +1513,12 @@ export default function WeeklyPlanner() {
                 <span>Mis Platillos ({combinedDishes.length})</span>
               </button>
               <button
-                onClick={() => setPlannerModalTab('foods')}
+                onClick={() => {
+                  setPlannerModalTab('foods');
+                  if (foodSearchResults.length === 0) {
+                    handleSearchFoodsInPlanner('');
+                  }
+                }}
                 className={`flex items-center gap-1.5 pb-2.5 px-3 border-b-2 transition ${
                   plannerModalTab === 'foods'
                     ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
@@ -1324,31 +1755,87 @@ export default function WeeklyPlanner() {
               {/* PESTAÑA 2: CATÁLOGO DE ALIMENTOS INDIVIDUALES */}
               {plannerModalTab === 'foods' && (
                 <div className="space-y-3">
+                  {/* Buscador de alimentos sueltos */}
                   <div className="relative">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
                     <input
                       type="text"
-                      placeholder="Buscar alimento individual (ej. Manzana, Huevo, Leche, Atún)..."
+                      placeholder="Buscar alimento suelto (ej. Manzana, Plátano, Huevo, Avena)..."
                       value={foodSearchQuery}
                       onChange={(e) => handleSearchFoodsInPlanner(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 text-xs bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-hidden focus:border-emerald-500"
+                      className="w-full pl-9 pr-8 py-2 text-xs bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-hidden focus:border-emerald-500"
                     />
+                    {foodSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => handleSearchFoodsInPlanner('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Chips rápidos de sugerencias y básicos */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] font-medium no-scrollbar">
+                    <button
+                      type="button"
+                      onClick={() => handleSearchFoodsInPlanner('')}
+                      className={`px-2.5 py-1 rounded-full shrink-0 transition ${
+                        !foodSearchQuery
+                          ? 'bg-emerald-600 text-white font-bold'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200'
+                      }`}
+                    >
+                      ⭐ Populares
+                    </button>
+                    {[
+                      { label: '🍎 Manzana', q: 'manzana' },
+                      { label: '🍌 Plátano', q: 'plátano' },
+                      { label: '🍓 Fresas', q: 'fresas' },
+                      { label: '🥑 Aguacate', q: 'aguacate' },
+                      { label: '🥚 Huevo', q: 'huevo' },
+                      { label: '🍗 Pollo', q: 'pechuga de pollo' },
+                      { label: '🥣 Avena', q: 'avena' },
+                      { label: '🍚 Arroz', q: 'arroz' },
+                      { label: '🐟 Atún', q: 'atún' },
+                      { label: '🥛 Yogurt', q: 'yogurt' },
+                    ].map((chip) => (
+                      <button
+                        key={chip.q}
+                        type="button"
+                        onClick={() => handleSearchFoodsInPlanner(chip.q)}
+                        className={`px-2.5 py-1 rounded-full shrink-0 transition ${
+                          foodSearchQuery.toLowerCase() === chip.q
+                            ? 'bg-emerald-600 text-white font-bold'
+                            : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200'
+                        }`}
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
                   </div>
 
                   {selectedFoodItem ? (
                     <div className="bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-2xl p-4 space-y-3">
                       <div className="flex items-start justify-between">
                         <div>
-                          <span className="text-xs font-bold text-zinc-900 dark:text-white block">
-                            {selectedFoodItem.name}
-                          </span>
-                          <span className="text-[10px] text-zinc-400">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-bold text-zinc-900 dark:text-white block">
+                              {selectedFoodItem.name}
+                            </span>
+                            <span className="text-[9px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded font-semibold">
+                              {selectedFoodItem.brand || 'Alimento Natural'}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-zinc-400 mt-0.5 block">
                             Base: {selectedFoodItem.serving_size_g}g ({selectedFoodItem.calories} kcal)
                           </span>
                         </div>
                         <button
+                          type="button"
                           onClick={() => setSelectedFoodItem(null)}
-                          className="text-xs text-zinc-400 hover:text-zinc-600 font-semibold"
+                          className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 font-semibold"
                         >
                           Cambiar
                         </button>
@@ -1414,35 +1901,55 @@ export default function WeeklyPlanner() {
                       })()}
                     </div>
                   ) : (
-                    <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                    <div className="space-y-1.5 max-h-60 overflow-y-auto pr-0.5">
                       {searchingFoods ? (
                         <p className="text-xs text-zinc-400 py-4 text-center">Buscando en catálogo...</p>
                       ) : foodSearchResults.length > 0 ? (
-                        foodSearchResults.map((food) => (
-                          <button
-                            key={food.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedFoodItem(food);
-                              setFoodGrams(food.serving_size_g || 100);
-                            }}
-                            className="w-full text-left p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition flex items-center justify-between text-xs"
-                          >
-                            <div>
-                              <span className="font-semibold text-zinc-900 dark:text-white block">
-                                {food.name}
-                              </span>
-                              <span className="text-[10px] text-zinc-400">
-                                {food.serving_size_g}g • {food.calories} kcal • P {food.protein_g}g • C {food.carbs_g}g • G {food.fat_g}g
-                              </span>
-                            </div>
-                            <ChevronRight className="w-4 h-4 text-zinc-400" />
-                          </button>
-                        ))
+                        foodSearchResults.map((food) => {
+                          const isNatural = food.is_verified || food.source === 'manual';
+                          return (
+                            <button
+                              key={food.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedFoodItem(food);
+                                setFoodGrams(food.serving_size_g || 100);
+                              }}
+                              className="w-full text-left p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800/70 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/60 hover:border-emerald-500/50 transition flex items-center justify-between text-xs group"
+                            >
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold text-zinc-900 dark:text-white">
+                                    {food.name}
+                                  </span>
+                                  {isNatural ? (
+                                    <span className="text-[9px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded font-semibold">
+                                      {food.brand || 'Alimento Natural'}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 px-1.5 py-0.5 rounded">
+                                      {food.brand || 'Envasado'}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
+                                    {food.calories} kcal
+                                  </span>
+                                  <span>•</span>
+                                  <span>P: <strong className="text-zinc-700 dark:text-zinc-300">{food.protein_g}g</strong></span>
+                                  <span>C: <strong className="text-zinc-700 dark:text-zinc-300">{food.carbs_g}g</strong></span>
+                                  <span>G: <strong className="text-zinc-700 dark:text-zinc-300">{food.fat_g}g</strong></span>
+                                </div>
+                              </div>
+                              <ChevronRight className="w-4 h-4 text-zinc-400 group-hover:text-emerald-500 transition shrink-0 ml-2" />
+                            </button>
+                          );
+                        })
                       ) : (
-                        <p className="text-xs text-zinc-400 py-6 text-center italic">
-                          Escribe el nombre de un alimento para buscar en el catálogo.
-                        </p>
+                        <div className="text-center py-6 text-zinc-400 text-xs">
+                          No se encontraron alimentos para &quot;{foodSearchQuery}&quot;.
+                        </div>
                       )}
                     </div>
                   )}
@@ -1525,6 +2032,49 @@ export default function WeeklyPlanner() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL VER DETALLE DE RECETA Y ESCALADO DIRECTO DESDE EL PLAN */}
+      {selectedPlanDishForModal && (
+        <RecipeDetailModal
+          dish={selectedPlanDishForModal}
+          onClose={() => setSelectedPlanDishForModal(null)}
+          onLogToday={async (dish, count) => {
+            try {
+              const todayStr = getLocalDateString();
+              await fetch('/api/food-logs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  date: todayStr,
+                  meal_type: dish.category === 'general' ? 'lunch' : (dish.category as MealType),
+                  food_name: `${dish.name} (${count} ${dish.serving_name || 'porción'})`,
+                  calories: Math.round(dish.calories_per_serving * count),
+                  protein_g: Number((dish.protein_per_serving * count).toFixed(1)),
+                  carbs_g: Number((dish.carbs_per_serving * count).toFixed(1)),
+                  fat_g: Number((dish.fat_per_serving * count).toFixed(1)),
+                  fiber_g: Number(((dish.fiber_per_serving || 0) * count).toFixed(1)),
+                  servings: count,
+                }),
+              });
+              setSelectedPlanDishForModal(null);
+            } catch {
+              // Ignorar
+            }
+          }}
+          onCloneTemplate={async (dish, customServings) => {
+            try {
+              await fetch('/api/dishes/templates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ templateId: dish.id, servings: customServings || 1 }),
+              });
+              await fetchDishes();
+            } catch {
+              // Ignorar
+            }
+          }}
+        />
       )}
     </div>
   );

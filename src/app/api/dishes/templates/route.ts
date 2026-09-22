@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { STARTER_RECIPES } from '@/lib/data/starterRecipes';
-import { getDb } from '@/lib/store/mockDb';
+import { getDb, insertRow } from '@/lib/store/mockDb';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 
@@ -15,7 +15,7 @@ export async function POST(req: Request) {
     if (!userId) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
     const body = await req.json();
-    const { templateId } = body;
+    const { templateId, servings } = body;
 
     const template = STARTER_RECIPES.find((t) => t.id === templateId);
     if (!template) {
@@ -25,32 +25,73 @@ export async function POST(req: Request) {
     const db = await getDb();
     const user = db.profiles.find((p) => p.id === userId);
 
-    const newDishId = 'dish-' + crypto.randomUUID().slice(0, 8);
+    const baseServings = template.total_servings || 1;
+    const targetServings = Math.max(0.5, Number(servings) || baseServings);
+    const ratio = targetServings / baseServings;
+
+    const newDishId = crypto.randomUUID();
 
     const clonedDish = {
-      ...template,
       id: newDishId,
       user_id: userId,
       household_id: user?.household_id || null,
+      name: template.name + (targetServings !== baseServings ? ` (${targetServings} porciones)` : ''),
+      description: template.description || null,
+      category: template.category || 'general',
+      total_servings: targetServings,
+      total_weight_g: template.total_weight_g ? Math.round(template.total_weight_g * ratio) : null,
+      serving_name: template.serving_name || 'porción',
+      is_shared_with_partner: true,
+      total_calories: Math.round(template.calories_per_serving * targetServings),
+      total_protein_g: Number((template.protein_per_serving * targetServings).toFixed(1)),
+      total_carbs_g: Number((template.carbs_per_serving * targetServings).toFixed(1)),
+      total_fat_g: Number((template.fat_per_serving * targetServings).toFixed(1)),
+      total_fiber_g: Number(((template.fiber_per_serving || 0) * targetServings).toFixed(1)),
+      calories_per_serving: template.calories_per_serving,
+      protein_per_serving: template.protein_per_serving,
+      carbs_per_serving: template.carbs_per_serving,
+      fat_per_serving: template.fat_per_serving,
+      fiber_per_serving: template.fiber_per_serving || 0,
+      prep_time_minutes: template.prep_time_minutes || 0,
+      cook_time_minutes: template.cook_time_minutes || 0,
+      instructions: template.instructions || [],
       is_starter_template: false,
       created_at: new Date().toISOString(),
     };
 
-    db.dishes.unshift(clonedDish);
+    await insertRow('dishes', clonedDish);
 
-    // Clonar ingredientes
-    if (template.ingredients) {
+    // Clonar ingredientes escalados a las porciones deseadas
+    const clonedIngredients = [];
+    if (template.ingredients && template.ingredients.length > 0) {
       for (const ing of template.ingredients) {
-        db.dish_ingredients.push({
-          ...ing,
-          id: 'di-' + crypto.randomUUID().slice(0, 8),
+        const scaledIng = {
+          id: crypto.randomUUID(),
           dish_id: newDishId,
+          food_id: ing.food_id || null,
+          ingredient_name: ing.ingredient_name,
+          amount_g: Math.round(ing.amount_g * ratio),
+          calories: Math.round(ing.calories * ratio),
+          protein_g: Number((ing.protein_g * ratio).toFixed(1)),
+          carbs_g: Number((ing.carbs_g * ratio).toFixed(1)),
+          fat_g: Number((ing.fat_g * ratio).toFixed(1)),
+          fiber_g: ing.fiber_g ? Number((ing.fiber_g * ratio).toFixed(1)) : 0,
+          sodium_mg: ing.sodium_mg ? Math.round(ing.sodium_mg * ratio) : 0,
+          aisle_category: ing.aisle_category || 'Otros',
           created_at: new Date().toISOString(),
-        });
+        };
+        await insertRow('dish_ingredients', scaledIng);
+        clonedIngredients.push(scaledIng);
       }
     }
 
-    return NextResponse.json({ success: true, dish: clonedDish });
+    return NextResponse.json({
+      success: true,
+      dish: {
+        ...clonedDish,
+        ingredients: clonedIngredients,
+      },
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al clonar plantilla';
     return NextResponse.json({ error: message }, { status: 500 });

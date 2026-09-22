@@ -15,6 +15,7 @@ import {
   Plus,
   Scale,
   Sparkles,
+  Pencil,
 } from 'lucide-react';
 
 interface RecipeDetailModalProps {
@@ -22,7 +23,57 @@ interface RecipeDetailModalProps {
   onClose: () => void;
   onSchedule?: (dish: Dish) => void;
   onLogToday?: (dish: Dish, servings: number) => void;
-  onCloneTemplate?: (dish: Dish) => void;
+  onCloneTemplate?: (dish: Dish, customServings?: number) => void;
+  onEdit?: (dish: Dish) => void;
+}
+
+function getCulinaryMeasureHint(ingName: string, grams: number): string | null {
+  const lower = ingName.toLowerCase();
+  if (lower.includes('clara')) {
+    const ml = grams;
+    const cdas = Math.round(ml / 15);
+    if (ml >= 120) {
+      const tazas = (ml / 240).toFixed(1).replace('.0', '');
+      return `~${tazas} taza (${ml} ml)`;
+    }
+    return `~${cdas} cdas (${ml} ml)`;
+  }
+  if ((lower.includes('huevo') || lower.includes('huevos')) && !lower.includes('clara')) {
+    const pzas = Math.max(1, Math.round(grams / 50));
+    return `${pzas} ${pzas === 1 ? 'huevo' : 'huevos'}`;
+  }
+  if (lower.includes('aceite')) {
+    const cdtas = Math.max(1, Math.round(grams / 5));
+    return `~${cdtas} cdtas (${grams} ml)`;
+  }
+  if (lower.includes('leche')) {
+    if (grams >= 200) {
+      const tazas = (grams / 240).toFixed(1).replace('.0', '');
+      return `~${tazas} taza (${grams} ml)`;
+    }
+    return `${grams} ml`;
+  }
+  if (lower.includes('atún')) {
+    const latas = Math.max(1, Math.round(grams / 120));
+    return `${latas} ${latas === 1 ? 'lata' : 'latas'}`;
+  }
+  if (lower.includes('aguacate')) {
+    const pzas = (grams / 120).toFixed(1).replace('.0', '');
+    return `~${pzas} aguacate`;
+  }
+  if (lower.includes('tostada')) {
+    const pzas = Math.max(1, Math.round(grams / 12));
+    return `${pzas} tostadas`;
+  }
+  if (lower.includes('tortilla')) {
+    const pzas = Math.max(1, Math.round(grams / 25));
+    return `${pzas} tortillas`;
+  }
+  if (lower.includes('chía') || lower.includes('linaza')) {
+    const cdas = Math.max(1, Math.round(grams / 10));
+    return `~${cdas} cda`;
+  }
+  return null;
 }
 
 export default function RecipeDetailModal({
@@ -31,6 +82,7 @@ export default function RecipeDetailModal({
   onSchedule,
   onLogToday,
   onCloneTemplate,
+  onEdit,
 }: RecipeDetailModalProps) {
   const { user, partner, activeGoal, partnerGoal } = useAuth();
 
@@ -96,15 +148,27 @@ export default function RecipeDetailModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="bg-white dark:bg-zinc-900 w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden">
+      <div className="bg-white dark:bg-zinc-900 w-full max-w-2xl rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col border border-zinc-200 dark:border-zinc-800 shadow-2xl overflow-hidden">
         {/* Header con imagen/gradiente */}
         <div className="relative bg-gradient-to-br from-emerald-600 to-teal-700 text-white p-5 pt-6">
-          <button
-            onClick={onClose}
-            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-black/20 hover:bg-black/40 flex items-center justify-center text-white transition"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="absolute top-4 right-4 flex items-center gap-1.5">
+            {!dish.is_starter_template && onEdit && (
+              <button
+                onClick={() => onEdit(dish)}
+                className="h-8 px-2.5 rounded-full bg-white/20 hover:bg-white/30 flex items-center gap-1 text-xs font-semibold text-white transition"
+                title="Editar ingredientes y porciones de esta receta"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Editar</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-black/20 hover:bg-black/40 flex items-center justify-center text-white transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
 
           <span className="text-[10px] font-bold uppercase tracking-wider bg-white/20 px-2.5 py-0.5 rounded-full inline-block mb-1.5">
             {dish.category === 'breakfast'
@@ -143,7 +207,7 @@ export default function RecipeDetailModal({
           </div>
         </div>
 
-        {/* SELECTOR DE MODO DE ESCALADO (Solo si tiene compañero vinculado) */}
+        {/* SELECTOR DE MODO DE ESCALADO - SÓLO SI TIENE PARTNER VINCULADO */}
         {partner && (
           <div className="bg-zinc-100 dark:bg-zinc-800/90 p-1.5 mx-5 mt-4 rounded-2xl flex gap-1 border border-zinc-200/80 dark:border-zinc-700/60 shrink-0">
             <button
@@ -168,7 +232,7 @@ export default function RecipeDetailModal({
               }`}
             >
               <Scale className="w-3.5 h-3.5" />
-              <span>Reparto Duo ({userName} vs {partnerName})</span>
+              <span>Reparto Dúo ({userName} vs {partnerName})</span>
             </button>
           </div>
         )}
@@ -176,16 +240,16 @@ export default function RecipeDetailModal({
         {/* CONTENIDO DESPLAZABLE */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {/* MODO 1: ESCALADOR TRADICIONAL DE PORCIONES */}
-          {scaleMode === 'standard' && (
+          {(!partner || scaleMode === 'standard') && (
             <div className="bg-zinc-50 dark:bg-zinc-800/70 rounded-2xl p-4 border border-zinc-200 dark:border-zinc-700/60 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
                     <Users className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Escalar Porciones a Preparar</span>
+                    <span>{partner ? 'Porciones a Cocinar (Dúo)' : 'Porciones a Cocinar (Individual / Meal Prep)'}</span>
                   </span>
                   <span className="text-[11px] text-zinc-400">
-                    Multiplica los ingredientes automáticamente
+                    Multiplica los ingredientes automáticamente según las porciones que vayas a cocinar
                   </span>
                 </div>
 
@@ -263,7 +327,7 @@ export default function RecipeDetailModal({
           )}
 
           {/* MODO 2: ESCALADOR DE REPARTO DUO POR METAS INDIVIDUALES */}
-          {scaleMode === 'duo' && (
+          {partner && scaleMode === 'duo' && (
             <div className="bg-gradient-to-b from-emerald-50/50 to-teal-50/30 dark:from-emerald-950/20 dark:to-teal-950/10 rounded-2xl p-4 border border-emerald-200/80 dark:border-emerald-800/60 space-y-4">
               <div className="flex items-start justify-between">
                 <div>
@@ -461,9 +525,19 @@ export default function RecipeDetailModal({
                         </span>
                       )}
                     </div>
-                    <span className="font-bold text-zinc-900 dark:text-white shrink-0">
-                      {scaledGrams} g
-                    </span>
+                    <div className="text-right shrink-0">
+                      <span className="font-bold text-zinc-900 dark:text-white block">
+                        {scaledGrams} g
+                      </span>
+                      {(() => {
+                        const hint = getCulinaryMeasureHint(ing.ingredient_name, scaledGrams);
+                        return hint ? (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold block">
+                            {hint}
+                          </span>
+                        ) : null;
+                      })()}
+                    </div>
                   </div>
                 );
               })}
@@ -516,14 +590,24 @@ export default function RecipeDetailModal({
         <div className="p-4 bg-zinc-50 dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex gap-2">
           {dish.is_starter_template && onCloneTemplate ? (
             <button
-              onClick={() => onCloneTemplate(dish)}
+              onClick={() => onCloneTemplate(dish, servings)}
               className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20"
             >
               <Copy className="w-4 h-4" />
-              <span>Clonar a Mis Platillos</span>
+              <span>Clonar a Mis Platillos ({servings} {servings > 1 ? 'porciones' : 'porción'})</span>
             </button>
           ) : (
             <>
+              {!dish.is_starter_template && onEdit && (
+                <button
+                  onClick={() => onEdit(dish)}
+                  className="py-2.5 px-3.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5"
+                  title="Modificar ingredientes o porciones"
+                >
+                  <Pencil className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>Editar</span>
+                </button>
+              )}
               {onSchedule && (
                 <button
                   onClick={() => onSchedule(dish)}

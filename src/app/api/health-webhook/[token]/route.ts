@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/store/mockDb';
 import { z } from 'zod';
 import crypto from 'crypto';
+import { getLocalDateString } from '@/lib/utils';
 
 const HealthPayloadSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -66,7 +67,7 @@ export async function POST(
       );
     }
 
-    const { date = new Date().toISOString().split('T')[0], active_calories_burned, steps, resting_heart_rate, weight_kg } = parseResult.data;
+    const { date = getLocalDateString(), active_calories_burned, steps, resting_heart_rate, weight_kg } = parseResult.data;
 
     // 4. Upsert en health_metrics
     const existingIndex = db.health_metrics.findIndex(

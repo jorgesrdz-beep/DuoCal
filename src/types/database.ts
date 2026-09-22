@@ -95,6 +95,7 @@ export interface Food {
   protein_g: number;
   carbs_g: number;
   fat_g: number;
+  fiber_g?: number;
   source: FoodSource;
   barcode: string | null;
   is_verified: boolean;
@@ -114,6 +115,7 @@ export interface MealPlanItem {
   protein_g: number;
   carbs_g: number;
   fat_g: number;
+  fiber_g?: number;
   created_at: string;
 }
 

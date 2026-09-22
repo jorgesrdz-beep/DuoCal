@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { evaluateProgressAndSuggestAdjustment, calculateGoalMacros } from '@/lib/tdee';
 import crypto from 'crypto';
 import { GoalType } from '@/types/database';
+import { getLocalDateString } from '@/lib/utils';
 
 export async function GET() {
   try {
@@ -23,27 +24,13 @@ export async function GET() {
       });
     }
 
-    // 1. Recopilar registros de peso (de health_metrics y mediciones)
+    // 1. Recopilar registros de peso reales (de health_metrics)
     const userMetrics = db.health_metrics
       .filter((m) => m.user_id === userId && m.weight_kg !== null && m.weight_kg !== undefined)
       .map((m) => ({
         date: m.date,
         weight_kg: Number(m.weight_kg),
       }));
-
-    // Si no hay métricas de salud registradas, usar el peso de referencia actual y peso inicial de la meta
-    if (userMetrics.length === 0 && user.current_weight_kg) {
-      userMetrics.push({
-        date: new Date().toISOString().split('T')[0],
-        weight_kg: user.current_weight_kg,
-      });
-      if (activeGoal.initial_weight_kg) {
-        userMetrics.push({
-          date: activeGoal.start_date,
-          weight_kg: activeGoal.initial_weight_kg,
-        });
-      }
-    }
 
     // 2. Recopilar registros de alimentos (agrupados por fecha)
     const userFoodLogs = db.food_logs.filter((log) => log.user_id === userId);
@@ -114,7 +101,7 @@ export async function POST(req: Request) {
 
     // Desactivar meta actual
     activeGoal.is_active = false;
-    activeGoal.end_date = new Date().toISOString().split('T')[0];
+    activeGoal.end_date = getLocalDateString();
     await updateRow('goals', activeGoal.id, { is_active: false, end_date: activeGoal.end_date });
 
     // Recalcular macros manteniendo el nuevo objetivo calórico
@@ -141,7 +128,7 @@ export async function POST(req: Request) {
       id: crypto.randomUUID(),
       user_id: userId,
       goal_type: activeGoal.goal_type,
-      start_date: new Date().toISOString().split('T')[0],
+      start_date: getLocalDateString(),
       end_date: null,
       suggested_duration_weeks: activeGoal.suggested_duration_weeks,
       tdee_calculated: recalculated.tdee,
