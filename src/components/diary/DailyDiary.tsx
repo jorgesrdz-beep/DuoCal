@@ -131,7 +131,16 @@ export default function DailyDiary() {
     return () => window.removeEventListener('duo_calories_timezone_changed', handleTzChange);
   }, []);
   const [totals, setTotals] = useState({ calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0 });
-  const [waterIntake, setWaterIntake] = useState(0);
+  const [waterIntake, setWaterIntake] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const today = getLocalDateString();
+        const legacy = localStorage.getItem(`duocal_water_${today}`);
+        if (legacy !== null && !isNaN(parseInt(legacy, 10))) return parseInt(legacy, 10);
+      } catch {}
+    }
+    return 0;
+  });
   const [isWaterModalOpen, setIsWaterModalOpen] = useState(false);
   const [customWaterInput, setCustomWaterInput] = useState('');
   const [loading, setLoading] = useState(true);
@@ -296,9 +305,15 @@ export default function DailyDiary() {
   };
 
   const handleLogAllPlanned = async () => {
-    const unlogged = plannedMealsForDay.filter(
-      (p) => !logs.some((l) => l.meal_type === p.meal_type)
-    );
+    const isItemLogged = (item: any) => {
+      const baseName = (item.custom_name || '').replace(/\s*\(.*$/, '').trim().toLowerCase();
+      return logs.some(
+        (l) =>
+          l.meal_type === item.meal_type &&
+          (l.food_name.toLowerCase().includes(baseName) || baseName.includes(l.food_name.toLowerCase().trim()))
+      );
+    };
+    const unlogged = plannedMealsForDay.filter((p) => !isItemLogged(p));
     if (unlogged.length === 0) return;
 
     setIsLoggingAllPlanned(true);
@@ -372,12 +387,14 @@ export default function DailyDiary() {
     fetchDishes();
 
     // 1. Carga optimista inmediata de localStorage
+    let localSaved: number | null = null;
     if (typeof window !== 'undefined') {
       const userKey = user?.id ? `duocal_water_${user.id}_${selectedDate}` : null;
       const legacyKey = `duocal_water_${selectedDate}`;
       const saved = (userKey ? localStorage.getItem(userKey) : null) || localStorage.getItem(legacyKey);
       if (saved !== null && !isNaN(parseInt(saved, 10))) {
-        setWaterIntake(parseInt(saved, 10));
+        localSaved = parseInt(saved, 10);
+        setWaterIntake(localSaved);
       } else {
         setWaterIntake(0);
       }
@@ -387,23 +404,36 @@ export default function DailyDiary() {
     fetch(`/api/water?date=${selectedDate}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data && typeof data.water_ml === 'number') {
-          setWaterIntake(data.water_ml);
+        if (!data) return;
+
+        const serverWater = typeof data.water_ml === 'number' ? data.water_ml : null;
+        const hasServerRecord = data.has_record === true;
+
+        if (hasServerRecord && serverWater !== null) {
+          // El servidor tiene registro confirmado (incluso si el usuario registró explícitamente 0)
+          setWaterIntake(serverWater);
           if (typeof window !== 'undefined') {
             const key = user?.id ? `duocal_water_${user.id}_${selectedDate}` : `duocal_water_${selectedDate}`;
-            localStorage.setItem(key, String(data.water_ml));
-            localStorage.setItem(`duocal_water_${selectedDate}`, String(data.water_ml));
+            localStorage.setItem(key, String(serverWater));
+            localStorage.setItem(`duocal_water_${selectedDate}`, String(serverWater));
           }
-        } else if (typeof window !== 'undefined') {
-          // Si el servidor no tiene registro para este día pero localStorage sí, respaldarlo
-          const legacy = localStorage.getItem(`duocal_water_${selectedDate}`);
-          if (legacy && parseInt(legacy, 10) > 0) {
-            const legacyVal = parseInt(legacy, 10);
+        } else if (!hasServerRecord) {
+          // El servidor aún no tiene registro para este día
+          // Si en localStorage ya tenemos agua acumulada > 0, PRESERVARLA y respaldarla en el servidor
+          if (localSaved !== null && localSaved > 0) {
+            setWaterIntake(localSaved);
             fetch('/api/water', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ date: selectedDate, water_ml: legacyVal }),
+              body: JSON.stringify({ date: selectedDate, water_ml: localSaved }),
             }).catch(() => {});
+          } else if (serverWater !== null && serverWater > 0) {
+            setWaterIntake(serverWater);
+            if (typeof window !== 'undefined') {
+              const key = user?.id ? `duocal_water_${user.id}_${selectedDate}` : `duocal_water_${selectedDate}`;
+              localStorage.setItem(key, String(serverWater));
+              localStorage.setItem(`duocal_water_${selectedDate}`, String(serverWater));
+            }
           }
         }
       })
@@ -411,7 +441,18 @@ export default function DailyDiary() {
   }, [selectedDate, user?.id]);
 
   const handleAdjustWater = async (delta: number) => {
-    const updated = Math.max(0, waterIntake + delta);
+    // Tomar el valor más reciente de localStorage o memoria para evitar cierres obsoletos en clics rápidos
+    let currentWater = waterIntake;
+    if (typeof window !== 'undefined') {
+      const userKey = user?.id ? `duocal_water_${user.id}_${selectedDate}` : null;
+      const legacyKey = `duocal_water_${selectedDate}`;
+      const saved = (userKey ? localStorage.getItem(userKey) : null) || localStorage.getItem(legacyKey);
+      if (saved !== null && !isNaN(parseInt(saved, 10))) {
+        currentWater = Math.max(currentWater, parseInt(saved, 10));
+      }
+    }
+
+    const updated = Math.max(0, currentWater + delta);
     setWaterIntake(updated);
 
     if (typeof window !== 'undefined') {
@@ -954,9 +995,15 @@ export default function DailyDiary() {
 
       {/* Banner de Comidas Planeadas del Plan Semanal para este día */}
       {(() => {
-        const unloggedPlanned = plannedMealsForDay.filter(
-          (p) => !logs.some((l) => l.meal_type === p.meal_type)
-        );
+        const isItemLogged = (item: any) => {
+          const baseName = (item.custom_name || '').replace(/\s*\(.*$/, '').trim().toLowerCase();
+          return logs.some(
+            (l) =>
+              l.meal_type === item.meal_type &&
+              (l.food_name.toLowerCase().includes(baseName) || baseName.includes(l.food_name.toLowerCase().trim()))
+          );
+        };
+        const unloggedPlanned = plannedMealsForDay.filter((p) => !isItemLogged(p));
         if (unloggedPlanned.length === 0) return null;
 
         return (

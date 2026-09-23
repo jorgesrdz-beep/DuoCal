@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Flame, Activity, TrendingUp, Users, Calendar, ArrowUpRight, ArrowDownRight, CheckCircle2 } from 'lucide-react';
+import { Flame, Activity, TrendingUp, Users, Calendar, ArrowUpRight, ArrowDownRight, CheckCircle2, Droplets } from 'lucide-react';
 import { getLocalDateString } from '@/lib/utils';
 import {
   ResponsiveContainer,
@@ -144,6 +144,19 @@ export default function WeeklyBalanceCard() {
                   </span>
                 </div>
               </div>
+
+              {/* Mini indicador de hidratación del día */}
+              {todayBalance.user.waterTarget && (
+                <div className="flex items-center justify-between pt-1 text-[11px]">
+                  <span className="flex items-center gap-1 text-sky-700 dark:text-sky-300 font-medium">
+                    <Droplets className="w-3.5 h-3.5 text-sky-500" />
+                    <span>Agua: <strong>{todayBalance.user.waterIntake || 0}</strong> / {todayBalance.user.waterTarget} ml</span>
+                  </span>
+                  <span className="text-[10px] text-zinc-400 font-bold">
+                    {Math.min(100, Math.round(((todayBalance.user.waterIntake || 0) / todayBalance.user.waterTarget) * 100))}%
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Balance de Compañero/a (Roomie / Duo) Hoy - Solo si está vinculado */}

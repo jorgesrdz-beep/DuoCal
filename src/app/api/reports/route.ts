@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/store/mockDb';
 import { getLocalDateString, shiftDateDays } from '@/lib/utils';
-import { getWaterIntake } from '@/lib/store/waterStore';
+import { getWaterIntakeSync } from '@/lib/store/waterStore';
 
 export async function GET(req: Request) {
   try {
@@ -59,7 +59,7 @@ export async function GET(req: Request) {
         steps,
         weight,
         netBalance,
-        water_ml: getWaterIntake(userId, dateStr),
+        water_ml: db.water_logs?.find((w) => w.user_id === userId && w.date === dateStr)?.water_ml ?? getWaterIntakeSync(userId, dateStr),
         goalType: activeGoal?.goal_type || 'maintenance',
       };
     });
@@ -138,7 +138,7 @@ export async function GET(req: Request) {
         fiber: Number(userTodayFiber.toFixed(1)),
         targetFiber: activeGoal?.fiber_target_g || (user.gender === 'female' ? 25 : 30),
         waterTarget: activeGoal?.water_target_ml || Math.round((user.current_weight_kg || 70) * 35),
-        waterIntake: getWaterIntake(userId, todayStr),
+        waterIntake: db.water_logs?.find((w) => w.user_id === userId && w.date === todayStr)?.water_ml ?? getWaterIntakeSync(userId, todayStr),
       },
       partner: partnerSummary ? {
         name: partnerSummary.partnerName,

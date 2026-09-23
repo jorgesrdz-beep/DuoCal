@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { STARTER_RECIPES } from '@/lib/data/starterRecipes';
 import { getDb, insertRow } from '@/lib/store/mockDb';
+import { resolveIngredientFiber } from '@/lib/utils/fiberUtils';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 
@@ -31,6 +32,47 @@ export async function POST(req: Request) {
 
     const newDishId = crypto.randomUUID();
 
+    // Clonar ingredientes escalados a las porciones deseadas
+    const clonedIngredients = [];
+    let sumIngFiber = 0;
+    if (template.ingredients && template.ingredients.length > 0) {
+      for (const ing of template.ingredients) {
+        const scaledWeight = Math.round(ing.amount_g * ratio);
+        const resolvedFiber = resolveIngredientFiber(
+          {
+            food_id: ing.food_id || null,
+            ingredient_name: ing.ingredient_name,
+            amount_g: scaledWeight,
+            fiber_g: ing.fiber_g ? Number((ing.fiber_g * ratio).toFixed(1)) : 0,
+          },
+          db.foods
+        );
+        sumIngFiber += resolvedFiber;
+
+        const scaledIng = {
+          id: crypto.randomUUID(),
+          dish_id: newDishId,
+          food_id: ing.food_id || null,
+          ingredient_name: ing.ingredient_name,
+          amount_g: scaledWeight,
+          calories: Math.round(ing.calories * ratio),
+          protein_g: Number((ing.protein_g * ratio).toFixed(1)),
+          carbs_g: Number((ing.carbs_g * ratio).toFixed(1)),
+          fat_g: Number((ing.fat_g * ratio).toFixed(1)),
+          fiber_g: resolvedFiber,
+          sodium_mg: ing.sodium_mg ? Math.round(ing.sodium_mg * ratio) : 0,
+          aisle_category: ing.aisle_category || 'Otros',
+          created_at: new Date().toISOString(),
+        };
+        clonedIngredients.push(scaledIng);
+      }
+    }
+
+    const calculatedTotalFiber = sumIngFiber > 0
+      ? Number(sumIngFiber.toFixed(1))
+      : Number(((template.fiber_per_serving || 0) * targetServings).toFixed(1));
+    const calculatedFiberPerServing = Number((calculatedTotalFiber / targetServings).toFixed(1));
+
     const clonedDish = {
       id: newDishId,
       user_id: userId,
@@ -46,12 +88,12 @@ export async function POST(req: Request) {
       total_protein_g: Number((template.protein_per_serving * targetServings).toFixed(1)),
       total_carbs_g: Number((template.carbs_per_serving * targetServings).toFixed(1)),
       total_fat_g: Number((template.fat_per_serving * targetServings).toFixed(1)),
-      total_fiber_g: Number(((template.fiber_per_serving || 0) * targetServings).toFixed(1)),
+      total_fiber_g: calculatedTotalFiber,
       calories_per_serving: template.calories_per_serving,
       protein_per_serving: template.protein_per_serving,
       carbs_per_serving: template.carbs_per_serving,
       fat_per_serving: template.fat_per_serving,
-      fiber_per_serving: template.fiber_per_serving || 0,
+      fiber_per_serving: calculatedFiberPerServing,
       prep_time_minutes: template.prep_time_minutes || 0,
       cook_time_minutes: template.cook_time_minutes || 0,
       instructions: template.instructions || [],
@@ -61,28 +103,8 @@ export async function POST(req: Request) {
 
     await insertRow('dishes', clonedDish);
 
-    // Clonar ingredientes escalados a las porciones deseadas
-    const clonedIngredients = [];
-    if (template.ingredients && template.ingredients.length > 0) {
-      for (const ing of template.ingredients) {
-        const scaledIng = {
-          id: crypto.randomUUID(),
-          dish_id: newDishId,
-          food_id: ing.food_id || null,
-          ingredient_name: ing.ingredient_name,
-          amount_g: Math.round(ing.amount_g * ratio),
-          calories: Math.round(ing.calories * ratio),
-          protein_g: Number((ing.protein_g * ratio).toFixed(1)),
-          carbs_g: Number((ing.carbs_g * ratio).toFixed(1)),
-          fat_g: Number((ing.fat_g * ratio).toFixed(1)),
-          fiber_g: ing.fiber_g ? Number((ing.fiber_g * ratio).toFixed(1)) : 0,
-          sodium_mg: ing.sodium_mg ? Math.round(ing.sodium_mg * ratio) : 0,
-          aisle_category: ing.aisle_category || 'Otros',
-          created_at: new Date().toISOString(),
-        };
-        await insertRow('dish_ingredients', scaledIng);
-        clonedIngredients.push(scaledIng);
-      }
+    for (const scaledIng of clonedIngredients) {
+      await insertRow('dish_ingredients', scaledIng);
     }
 
     return NextResponse.json({

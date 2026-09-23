@@ -455,31 +455,37 @@ export default function WeeklyPlanner() {
 
   const handleOpenDuplicateModal = (presetItemId?: string | unknown) => {
     const currentDayPlans = plans.filter((p) => p.day_of_week === selectedDay);
+    // Por defecto sugerir los demás días entre semana (L-V) si es día de semana, o toda la semana
+    const remainingWeekdays = [1, 2, 3, 4, 5].filter((d) => d !== selectedDay);
+    const defaultTargetDays =
+      remainingWeekdays.length > 0
+        ? remainingWeekdays
+        : [1, 2, 3, 4, 5, 6, 7].filter((d) => d !== selectedDay);
+
     if (typeof presetItemId === 'string' && presetItemId) {
       setSelectedItemIdsToDuplicate([presetItemId]);
     } else {
-      // Detección inteligente: filtrar aquellos platillos que NO están ya presentes en los otros días de la semana
-      const uncopied = currentDayPlans.filter((p) => {
+      // Detección inteligente: preseleccionar aquellos platillos que FALTAN en al menos uno de los días destino
+      const missingInTargets = currentDayPlans.filter((p) => {
         const baseName = p.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
-        const alreadyInOtherDays = plans.some(
-          (other) =>
-            other.day_of_week !== selectedDay &&
-            other.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase().includes(baseName)
+        const presentInAllTargets = defaultTargetDays.every((targetDay) =>
+          plans.some(
+            (other) =>
+              other.day_of_week === targetDay &&
+              other.meal_type === p.meal_type &&
+              other.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase().includes(baseName)
+          )
         );
-        return !alreadyInOtherDays;
+        return !presentInAllTargets;
       });
 
-      // Si hay platillos no copiados (como el recién añadido), sugerimos SOLO esos por defecto
-      if (uncopied.length > 0) {
-        setSelectedItemIdsToDuplicate(uncopied.map((p) => p.id));
+      if (missingInTargets.length > 0) {
+        setSelectedItemIdsToDuplicate(missingInTargets.map((p) => p.id));
       } else {
-        // Si todos ya están o ninguno está, preseleccionamos todos
         setSelectedItemIdsToDuplicate(currentDayPlans.map((p) => p.id));
       }
     }
-    // Por defecto sugerir los demás días entre semana (L-V) si es día de semana, o toda la semana
-    const remainingWeekdays = [1, 2, 3, 4, 5].filter((d) => d !== selectedDay);
-    setTargetDays(remainingWeekdays.length > 0 ? remainingWeekdays : [1, 2, 3, 4, 5, 6, 7].filter((d) => d !== selectedDay));
+    setTargetDays(defaultTargetDays);
     setDuplicateError(null);
     setDuplicateSuccess(null);
     setIsDuplicateOpen(true);
@@ -1385,6 +1391,28 @@ export default function WeeklyPlanner() {
                       <button
                         type="button"
                         onClick={() => {
+                          const missing = currentDayPlans.filter((p) => {
+                            const baseName = p.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
+                            return targetDays.some((tDay) =>
+                              !plans.some(
+                                (other) =>
+                                  other.day_of_week === tDay &&
+                                  other.meal_type === p.meal_type &&
+                                  other.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase().includes(baseName)
+                              )
+                            );
+                          });
+                          setSelectedItemIdsToDuplicate(missing.map((p) => p.id));
+                          setDuplicateError(null);
+                        }}
+                        className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold hover:underline cursor-pointer"
+                      >
+                        Solo faltantes
+                      </button>
+                      <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                      <button
+                        type="button"
+                        onClick={() => {
                           setSelectedItemIdsToDuplicate([]);
                           setDuplicateError(null);
                         }}
@@ -1408,17 +1436,14 @@ export default function WeeklyPlanner() {
                           : 'Snack';
 
                       const baseName = p.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
-                      const otherDays = [
-                        ...new Set(
-                          plans
-                            .filter(
-                              (other) =>
-                                other.day_of_week !== selectedDay &&
-                                other.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase().includes(baseName)
-                            )
-                            .map((other) => other.day_of_week)
-                        ),
-                      ];
+                      const missingInTargetsCount = targetDays.filter((tDay) =>
+                        !plans.some(
+                          (other) =>
+                            other.day_of_week === tDay &&
+                            other.meal_type === p.meal_type &&
+                            other.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase().includes(baseName)
+                        )
+                      ).length;
 
                       return (
                         <div
@@ -1450,15 +1475,21 @@ export default function WeeklyPlanner() {
                                 <span className="font-semibold text-zinc-900 dark:text-white truncate">
                                   {p.custom_name}
                                 </span>
-                                {otherDays.length > 0 ? (
-                                  <span className="text-[9px] bg-zinc-200/80 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 px-1.5 py-0.2 rounded-full font-medium shrink-0">
-                                    Ya en {otherDays.length} {otherDays.length === 1 ? 'día' : 'días'}
-                                  </span>
-                                ) : (
-                                  <span className="text-[9px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.2 rounded-full font-bold shrink-0">
-                                    ✨ Nuevo (sin repetir)
-                                  </span>
-                                )}
+                                {targetDays.length > 0 ? (
+                                  missingInTargetsCount === 0 ? (
+                                    <span className="text-[9px] bg-zinc-200/80 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 px-1.5 py-0.2 rounded-full font-medium shrink-0">
+                                      Ya en todos los días destino
+                                    </span>
+                                  ) : missingInTargetsCount === targetDays.length ? (
+                                    <span className="text-[9px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.2 rounded-full font-bold shrink-0">
+                                      ✨ Falta en los {targetDays.length} días destino
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.2 rounded-full font-medium shrink-0">
+                                      Falta en {missingInTargetsCount} día(s)
+                                    </span>
+                                  )
+                                ) : null}
                               </div>
                               <span className="text-[10px] text-zinc-400">
                                 {mealLabel} • {p.calories} kcal • P {p.protein_g}g

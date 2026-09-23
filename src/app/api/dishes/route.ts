@@ -4,6 +4,7 @@ import { isServiceRoleConfigured, supabaseAdmin } from '@/lib/supabase/admin';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 import { Dish, DishIngredient } from '@/types/database';
+import { resolveIngredientFiber } from '@/lib/utils/fiberUtils';
 
 export async function GET() {
   try {
@@ -116,7 +117,7 @@ export async function POST(req: Request) {
       const prot = Number(Number(ing.protein_g || 0).toFixed(1));
       const carbs = Number(Number(ing.carbs_g || 0).toFixed(1));
       const fat = Number(Number(ing.fat_g || 0).toFixed(1));
-      const fiber = Number(Number(ing.fiber_g || 0).toFixed(1));
+      const fiber = resolveIngredientFiber(ing, db.foods);
       const sodium = Number(ing.sodium_mg || 0);
 
       totalCals += cals;

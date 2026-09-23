@@ -1,4 +1,4 @@
-import { Profile, Household, Goal, Food, MealPlanItem, FoodLog, HealthMetric, ShoppingListItem, PhotoComparison, Dish, DishIngredient, ConsumptionSchedule } from '@/types/database';
+import { Profile, Household, Goal, Food, MealPlanItem, FoodLog, HealthMetric, ShoppingListItem, PhotoComparison, Dish, DishIngredient, ConsumptionSchedule, WaterLog } from '@/types/database';
 import { hashPin } from '@/lib/auth/pin';
 import { WHOLE_FOODS } from '@/lib/data/wholeFoods';
 
@@ -15,6 +15,7 @@ export interface InMemoryDB {
   dishes: Dish[];
   dish_ingredients: DishIngredient[];
   consumption_schedules: ConsumptionSchedule[];
+  water_logs: WaterLog[];
 }
 
 import { isServiceRoleConfigured, supabaseAdmin } from '@/lib/supabase/admin';
@@ -58,7 +59,14 @@ export async function getDb(): Promise<InMemoryDB> {
         for (const f of foods) {
           const idx = mergedFoods.findIndex((wf) => wf.id === f.id || wf.name.toLowerCase().trim() === f.name.toLowerCase().trim());
           if (idx !== -1) {
-            mergedFoods[idx] = f;
+            const wfFiber = mergedFoods[idx].fiber_g;
+            mergedFoods[idx] = {
+              ...mergedFoods[idx],
+              ...f,
+              fiber_g: (f.fiber_g !== undefined && f.fiber_g !== null && Number(f.fiber_g) > 0)
+                ? Number(f.fiber_g)
+                : (wfFiber !== undefined ? wfFiber : (f.fiber_g || 0)),
+            };
           } else {
             mergedFoods.push(f);
           }
@@ -69,6 +77,16 @@ export async function getDb(): Promise<InMemoryDB> {
         ...d,
         ingredients: (dish_ingredients || []).filter((di) => di.dish_id === d.id),
       }));
+
+      let liveWaterLogs: WaterLog[] = [];
+      try {
+        const { data: waterLogs, error: waterErr } = await supabaseAdmin.from('water_logs').select('*');
+        if (!waterErr && waterLogs) {
+          liveWaterLogs = waterLogs;
+        }
+      } catch {
+        // Fallback resiliente si la tabla aún no se ha creado en Supabase
+      }
 
       return {
         households: households || [],
@@ -83,6 +101,7 @@ export async function getDb(): Promise<InMemoryDB> {
         dishes: hydratedDishes,
         dish_ingredients: dish_ingredients || [],
         consumption_schedules: consumption_schedules || [],
+        water_logs: liveWaterLogs,
       };
     } catch (err) {
       console.error('Error fetching live data from Supabase:', err);
@@ -181,6 +200,7 @@ export async function getDb(): Promise<InMemoryDB> {
       health_metrics: [],
       shopping_list_items: [],
       photo_comparisons: [],
+      water_logs: [],
       dishes: [
         {
           id: 'd0000000-0000-0000-0000-000000000001',
@@ -358,6 +378,9 @@ const SUPABASE_ALLOWED_COLUMNS: Record<string, string[]> = {
   ],
   shopping_list_items: [
     'id', 'household_id', 'week_start_date', 'item_name', 'quantity_text', 'category', 'is_purchased', 'created_at'
+  ],
+  water_logs: [
+    'id', 'user_id', 'date', 'water_ml', 'created_at', 'updated_at'
   ],
 };
 

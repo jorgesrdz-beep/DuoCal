@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getDb, deleteRow, updateRow, insertRow } from '@/lib/store/mockDb';
+import { isServiceRoleConfigured, supabaseAdmin } from '@/lib/supabase/admin';
+import { WHOLE_FOODS } from '@/lib/data/wholeFoods';
+import { resolveIngredientFiber } from '@/lib/utils/fiberUtils';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 
@@ -77,7 +80,7 @@ export async function PUT(
       const prot = Number(Number(ing.protein_g || 0).toFixed(1));
       const carbs = Number(Number(ing.carbs_g || 0).toFixed(1));
       const fat = Number(Number(ing.fat_g || 0).toFixed(1));
-      const fiber = Number(Number(ing.fiber_g || 0).toFixed(1));
+      const fiber = resolveIngredientFiber(ing, db.foods);
       const sodium = Number(ing.sodium_mg || 0);
 
       totalCals += cals;
@@ -101,6 +104,10 @@ export async function PUT(
         sodium_mg: sodium,
         created_at: new Date().toISOString(),
       });
+    }
+
+    if (totalFiber === 0 && Number(existing.total_fiber_g) > 0 && processedIngredients.length === 0) {
+      totalFiber = Number(existing.total_fiber_g);
     }
 
     const updatedDish = {
@@ -129,7 +136,10 @@ export async function PUT(
 
     await updateRow('dishes', id, updatedDish);
 
-    // Reemplazar ingredientes
+    // Reemplazar ingredientes en Supabase y memoria
+    if (isServiceRoleConfigured) {
+      await supabaseAdmin.from('dish_ingredients').delete().eq('dish_id', id);
+    }
     db.dish_ingredients = db.dish_ingredients.filter((di) => di.dish_id !== id);
     for (const ing of processedIngredients) {
       await insertRow('dish_ingredients', ing);
@@ -165,6 +175,9 @@ export async function DELETE(
     }
 
     await deleteRow('dishes', id);
+    if (isServiceRoleConfigured) {
+      await supabaseAdmin.from('dish_ingredients').delete().eq('dish_id', id);
+    }
     db.dish_ingredients = db.dish_ingredients.filter((di) => di.dish_id !== id);
 
     return NextResponse.json({ success: true });

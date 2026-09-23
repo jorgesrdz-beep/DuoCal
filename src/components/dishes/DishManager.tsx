@@ -33,6 +33,7 @@ import RecipeImportModal from '@/components/dishes/RecipeImportModal';
 import BarcodeScannerModal from '@/components/scanner/BarcodeScannerModal';
 import { STARTER_RECIPES } from '@/lib/data/starterRecipes';
 import { getWeekStartDate, getNextWeekStartDate, getSmartMealPrepWeekStartDate, formatWeekDateRange, getLocalDateString } from '@/lib/utils';
+import { resolveIngredientFiber } from '@/lib/utils/fiberUtils';
 export function estimatePieceWeight(name: string): number {
   const n = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   if (n.includes('tomate') || n.includes('jitomate')) return 120; // 1 jitomate huaje/saladette mediano ≈ 120g
@@ -913,7 +914,7 @@ export default function DishManager() {
       const prot = ing.protein_g || 0;
       const carbs = ing.carbs_g || 0;
       const fat = ing.fat_g || 0;
-      const fiber = (ing as any).fiber_g || 0;
+      const fiber = resolveIngredientFiber(ing, customFoods);
       const ratio = amount > 0 ? 100 / amount : 1;
       const pieceWeight = estimatePieceWeight(ing.ingredient_name);
 
@@ -936,7 +937,7 @@ export default function DishManager() {
         carbs_g: carbs,
         fat_g: fat,
         fiber_g: fiber,
-        sodium_mg: 0,
+        sodium_mg: (ing as any).sodium_mg || 0,
         aisle_category: (ing as any).aisle_category,
       };
     });

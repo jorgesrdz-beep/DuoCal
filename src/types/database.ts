@@ -282,3 +282,13 @@ export interface PartnerSummary {
   days_logged: number;
   week_start: string;
 }
+
+export interface WaterLog {
+  id: string;
+  user_id: string;
+  date: string; // YYYY-MM-DD
+  water_ml: number;
+  created_at?: string;
+  updated_at?: string;
+}
+

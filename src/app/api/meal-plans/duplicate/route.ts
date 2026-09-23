@@ -62,34 +62,66 @@ export async function POST(req: Request) {
       }
     }
 
-    // Solo limpiar en los días destino los meal_types que realmente estamos replicando
-    const effectiveMealTypes = [...new Set(sourceItems.map((p) => p.meal_type))];
+    const isSelective = Array.isArray(selected_item_ids) && selected_item_ids.length > 0;
 
-    // 1. Limpiar en Supabase solo las comidas afectadas en una sola consulta atómica
-    if (isServiceRoleConfigured) {
-      const { error: delErr } = await supabaseAdmin
-        .from('meal_plans')
-        .delete()
-        .eq('user_id', userId)
-        .eq('week_start_date', week_start_date)
-        .in('day_of_week', cleanTargetDays)
-        .in('meal_type', effectiveMealTypes);
+    if (isSelective) {
+      // Duplicación selectiva: solo reemplazar en los días destino las instancias previas de ESTOS mismos platillos
+      // para evitar duplicados del mismo platillo, sin eliminar otros platillos que ya existían (ej. Albóndigas).
+      const sourceSignatures = sourceItems.map((item) => ({
+        meal_type: item.meal_type,
+        baseName: item.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase(),
+        food_id: item.food_id,
+      }));
 
-      if (delErr) {
-        console.error('Error eliminando comidas previas en Supabase:', delErr);
-      }
-    }
-
-    // 2. Limpiar en memoria
-    db.meal_plans = db.meal_plans.filter(
-      (p) =>
-        !(
-          p.user_id === userId &&
-          p.week_start_date === week_start_date &&
-          cleanTargetDays.includes(p.day_of_week) &&
-          effectiveMealTypes.includes(p.meal_type)
+      const idsToDelete = db.meal_plans
+        .filter(
+          (p) =>
+            p.user_id === userId &&
+            p.week_start_date === week_start_date &&
+            cleanTargetDays.includes(p.day_of_week) &&
+            sourceSignatures.some(
+              (sig) =>
+                sig.meal_type === p.meal_type &&
+                ((sig.food_id && sig.food_id === p.food_id) ||
+                  p.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase() === sig.baseName)
+            )
         )
-    );
+        .map((p) => p.id);
+
+      if (idsToDelete.length > 0) {
+        if (isServiceRoleConfigured) {
+          await supabaseAdmin.from('meal_plans').delete().in('id', idsToDelete);
+        }
+        db.meal_plans = db.meal_plans.filter((p) => !idsToDelete.includes(p.id));
+      }
+    } else {
+      // Duplicación total del día: limpiar los meal_types afectados
+      const effectiveMealTypes = [...new Set(sourceItems.map((p) => p.meal_type))];
+
+      if (isServiceRoleConfigured) {
+        const { error: delErr } = await supabaseAdmin
+          .from('meal_plans')
+          .delete()
+          .eq('user_id', userId)
+          .eq('week_start_date', week_start_date)
+          .in('day_of_week', cleanTargetDays)
+          .in('meal_type', effectiveMealTypes);
+
+        if (delErr) {
+          console.error('Error eliminando comidas previas en Supabase:', delErr);
+        }
+      }
+
+      db.meal_plans = db.meal_plans.filter(
+        (p) =>
+          !(
+            p.user_id === userId &&
+            p.week_start_date === week_start_date &&
+            cleanTargetDays.includes(p.day_of_week) &&
+            effectiveMealTypes.includes(p.meal_type)
+          )
+      );
+    }
 
     const isUuid = (val: string) =>
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
