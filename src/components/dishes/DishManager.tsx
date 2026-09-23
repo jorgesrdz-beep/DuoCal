@@ -70,6 +70,14 @@ export default function DishManager() {
   const [weeklyPlans, setWeeklyPlans] = useState<any[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(false);
 
+  // Mis Platillos: Buscador y Filtros
+  const [dishSearchQuery, setDishSearchQuery] = useState('');
+  const [dishCategoryFilter, setDishCategoryFilter] = useState<string>('all');
+
+  // Biblioteca: Buscador y Filtros
+  const [librarySearchQuery, setLibrarySearchQuery] = useState('');
+  const [libraryCategoryFilter, setLibraryCategoryFilter] = useState<string>('all');
+
   // Despensa de Ingredientes Personalizados
   const [customFoods, setCustomFoods] = useState<Food[]>([]);
   const [loadingCustomFoods, setLoadingCustomFoods] = useState(false);
@@ -324,6 +332,89 @@ export default function DishManager() {
       );
     });
   }, [customFoods, pantrySearchQuery, pantryCategoryFilter]);
+
+  // Helpers y filtros para Mis Platillos y Biblioteca
+  const isDishInCategory = (d: Dish, catKey: string): boolean => {
+    if (catKey === 'all') return true;
+    if (catKey === 'breakfast') return d.category === 'breakfast';
+    if (catKey === 'lunch') return d.category === 'lunch';
+    if (catKey === 'dinner') return d.category === 'dinner';
+    if (catKey === 'snack') return d.category === 'snack';
+    if (catKey === 'high-protein') return (d.protein_per_serving || 0) >= 25;
+    if (catKey === 'quick') {
+      const totalTime = (d.prep_time_minutes || 0) + (d.cook_time_minutes || 0);
+      return totalTime > 0 && totalTime <= 20;
+    }
+    if (catKey === 'shared') return Boolean(d.is_shared_with_partner);
+    return true;
+  };
+
+  const matchesDishSearch = (d: Dish, query: string): boolean => {
+    if (!query.trim()) return true;
+    const q = query.toLowerCase().trim();
+    if (d.name?.toLowerCase().includes(q)) return true;
+    if (d.description?.toLowerCase().includes(q)) return true;
+    if (d.ingredients && Array.isArray(d.ingredients)) {
+      if (d.ingredients.some((ing) => ing.ingredient_name?.toLowerCase().includes(q))) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const dishFilterCategories = useMemo(() => {
+    const cats = [
+      { key: 'all', label: '🌟 Todos', count: dishes.length },
+      { key: 'breakfast', label: '🍳 Desayunos', count: dishes.filter((d) => d.category === 'breakfast').length },
+      { key: 'lunch', label: '🥗 Comidas', count: dishes.filter((d) => d.category === 'lunch').length },
+      { key: 'dinner', label: '🍲 Cenas', count: dishes.filter((d) => d.category === 'dinner').length },
+      { key: 'snack', label: '🥪 Snacks', count: dishes.filter((d) => d.category === 'snack').length },
+      { key: 'high-protein', label: '🥩 Alta Proteína', count: dishes.filter((d) => (d.protein_per_serving || 0) >= 25).length },
+      { key: 'quick', label: '⚡ Rápidos', count: dishes.filter((d) => {
+        const t = (d.prep_time_minutes || 0) + (d.cook_time_minutes || 0);
+        return t > 0 && t <= 20;
+      }).length },
+    ];
+    if (partner) {
+      cats.push({
+        key: 'shared',
+        label: '👥 Compartidos',
+        count: dishes.filter((d) => d.is_shared_with_partner).length,
+      });
+    }
+    return cats;
+  }, [dishes, partner]);
+
+  const filteredDishes = useMemo(() => {
+    return dishes.filter((d) => {
+      if (!isDishInCategory(d, dishCategoryFilter)) return false;
+      if (!matchesDishSearch(d, dishSearchQuery)) return false;
+      return true;
+    });
+  }, [dishes, dishCategoryFilter, dishSearchQuery]);
+
+  const libraryFilterCategories = useMemo(() => {
+    return [
+      { key: 'all', label: '🌟 Todos', count: STARTER_RECIPES.length },
+      { key: 'breakfast', label: '🍳 Desayunos', count: STARTER_RECIPES.filter((r) => r.category === 'breakfast').length },
+      { key: 'lunch', label: '🥗 Comidas', count: STARTER_RECIPES.filter((r) => r.category === 'lunch').length },
+      { key: 'dinner', label: '🍲 Cenas', count: STARTER_RECIPES.filter((r) => r.category === 'dinner').length },
+      { key: 'snack', label: '🥪 Snacks', count: STARTER_RECIPES.filter((r) => r.category === 'snack').length },
+      { key: 'high-protein', label: '🥩 Alta Proteína', count: STARTER_RECIPES.filter((r) => (r.protein_per_serving || 0) >= 25).length },
+      { key: 'quick', label: '⚡ Rápidos', count: STARTER_RECIPES.filter((r) => {
+        const t = (r.prep_time_minutes || 0) + (r.cook_time_minutes || 0);
+        return t > 0 && t <= 20;
+      }).length },
+    ];
+  }, []);
+
+  const filteredLibraryRecipes = useMemo(() => {
+    return STARTER_RECIPES.filter((r) => {
+      if (!isDishInCategory(r, libraryCategoryFilter)) return false;
+      if (!matchesDishSearch(r, librarySearchQuery)) return false;
+      return true;
+    });
+  }, [libraryCategoryFilter, librarySearchQuery]);
 
   const handleSavePantryFood = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1189,7 +1280,7 @@ export default function DishManager() {
 
       {/* 2. PESTAÑA: MIS PLATILLOS */}
       {activeTab === 'my-dishes' && (
-        <>
+        <div className="space-y-4">
           {dishes.length === 0 ? (
             <div className="text-center py-10 bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 p-6 text-zinc-400 text-xs">
               <ChefHat className="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -1199,132 +1290,239 @@ export default function DishManager() {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {dishes.map((dish) => {
-                return (
-                  <div
-                    key={dish.id}
-                    className="bg-white dark:bg-zinc-900 rounded-3xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm space-y-3 hover:border-emerald-500/40 transition"
+            <>
+              {/* Buscador de platillos */}
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar en tus platillos por nombre o ingrediente (ej. Pollo, Avena, Fajitas)..."
+                  value={dishSearchQuery}
+                  onChange={(e) => setDishSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-emerald-500 shadow-xs"
+                />
+                {dishSearchQuery && (
+                  <button
+                    onClick={() => setDishSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs cursor-pointer"
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h4
-                            onClick={() => setSelectedRecipeForModal(dish)}
-                            className="text-sm font-bold text-zinc-900 dark:text-white hover:text-emerald-600 cursor-pointer transition"
-                          >
-                            {dish.name}
-                          </h4>
-                          {partner && dish.is_shared_with_partner && (
-                            <span className="text-[10px] font-medium bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 px-2 py-0.5 rounded-full border border-teal-200 dark:border-teal-800 flex items-center gap-1">
-                              <Users className="w-3 h-3" />
-                              <span>Compartido</span>
-                            </span>
-                          )}
-                        </div>
-                        {dish.description && (
-                          <p className="text-xs text-zinc-500 mt-0.5 line-clamp-1">{dish.description}</p>
-                        )}
-                      </div>
+                    ✕
+                  </button>
+                )}
+              </div>
 
-                    <button
-                      onClick={() => handleDeleteDish(dish.id)}
-                      className="text-zinc-400 hover:text-red-500 p-1 transition"
-                      title="Eliminar platillo"
+              {/* Chips de filtro por clasificación */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+                {dishFilterCategories.map((cat) => (
+                  <button
+                    key={cat.key}
+                    type="button"
+                    onClick={() => {
+                      setDishCategoryFilter((prev) => (prev === cat.key ? 'all' : cat.key));
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1.5 border cursor-pointer select-none active:scale-95 ${
+                      dishCategoryFilter === cat.key
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                        : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700'
+                    }`}
+                  >
+                    <span>{cat.label}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold flex items-center gap-1 ${
+                        dishCategoryFilter === cat.key
+                          ? 'bg-emerald-700 text-white'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
+                      }`}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <span>{cat.count}</span>
+                      {dishCategoryFilter === cat.key && cat.key !== 'all' && (
+                        <span className="text-[10px] opacity-80 hover:opacity-100 font-bold ml-0.5" title="Quitar filtro">
+                          ✕
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Listado de platillos filtrados o estado vacío de búsqueda */}
+              {filteredDishes.length === 0 ? (
+                <div className="text-center py-10 bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-3">
+                  <ChefHat className="w-10 h-10 mx-auto text-zinc-300 dark:text-zinc-700" />
+                  <div>
+                    <p className="font-bold text-zinc-700 dark:text-zinc-300 text-sm">
+                      {dishSearchQuery
+                        ? 'No se encontraron platillos con esa búsqueda'
+                        : 'No hay platillos en esta categoría'}
+                    </p>
+                    <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto">
+                      {dishSearchQuery
+                        ? 'Intenta con otro término o ingrediente, o elimina los filtros aplicados.'
+                        : 'Prueba seleccionando otra clasificación o crea un nuevo platillo para esta categoría.'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {(dishSearchQuery || dishCategoryFilter !== 'all') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDishSearchQuery('');
+                          setDishCategoryFilter('all');
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-xl text-xs font-bold transition cursor-pointer"
+                      >
+                        <span>Limpiar filtros</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={handleOpenNewDish}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-xs transition cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Nuevo Platillo</span>
                     </button>
                   </div>
-
-                  {/* Tarjeta de Macros por Porción vs Receta Completa */}
-                  <div
-                    onClick={() => setSelectedRecipeForModal(dish)}
-                    className="grid grid-cols-2 gap-2 bg-zinc-50 dark:bg-zinc-800/50 p-3 rounded-2xl border border-zinc-200/60 dark:border-zinc-700/60 text-xs cursor-pointer hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20 transition"
-                  >
-                    <div>
-                      <span className="text-[10px] text-zinc-400 uppercase font-semibold block">
-                        Por {dish.serving_name}
-                      </span>
-                      <span className="text-base font-black text-emerald-600 dark:text-emerald-400">
-                        {dish.calories_per_serving} kcal
-                      </span>
-                      <div className="text-[11px] text-zinc-500 mt-0.5">
-                        P: <strong className="text-zinc-800 dark:text-zinc-200">{dish.protein_per_serving}g</strong> • C: {dish.carbs_per_serving}g • G: {dish.fat_per_serving}g
-                      </div>
-                    </div>
-
-                    <div className="border-l border-zinc-200 dark:border-zinc-700 pl-3 flex flex-col justify-center">
-                      <span className="text-[10px] text-zinc-400 uppercase font-semibold block">
-                        Rinde {dish.total_servings} porc. {dish.total_weight_g ? `(~${Math.round(dish.total_weight_g / (dish.total_servings || 1))}g)` : ''}
-                      </span>
-                      <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                        {dish.total_calories} kcal totales
-                      </span>
-                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 font-semibold flex items-center gap-0.5">
-                        <ChefHat className="w-3 h-3 text-emerald-500" />
-                        <span>Ver receta y cocinar</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Botones de acción (Opción 2: Flujo principal + Iconos compactos a la derecha) */}
-                  <div className="flex items-center justify-between gap-2 pt-1">
-                    {/* Acciones principales de flujo */}
-                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                      <button
-                        onClick={() => setSelectedRecipeForModal(dish)}
-                        className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-xs active:scale-95"
-                        title="Ver receta, ingredientes escalados e instrucciones para cocinar"
-                      >
-                        <ChefHat className="w-3.5 h-3.5" />
-                        <span>Cocinar</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleOpenScheduleModal(dish)}
-                        className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition"
-                        title="Programar para Meal Prep o días específicos"
-                      >
-                        <Calendar className="w-3.5 h-3.5" />
-                        <span>Programar</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleLogPortionToday(dish, 1)}
-                        className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-300 transition active:scale-95"
-                        title="Registrar 1 porción consumida en el diario de hoy"
-                      >
-                        <Check className="w-3.5 h-3.5 text-emerald-500" />
-                        <span>Comer hoy</span>
-                      </button>
-                    </div>
-
-                    {/* Herramientas compactas a la derecha */}
-                    <div className="flex items-center gap-1 shrink-0 ml-auto">
-                      <button
-                        onClick={() => handleEditDish(dish)}
-                        className="p-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400"
-                        title="Editar ingredientes, marcas o porciones"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-
-                      <button
-                        onClick={() => setSelectedDishForNutrition(dish)}
-                        className="p-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400"
-                        title="Ver tabla nutrimental detallada"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
                 </div>
-              );
-            })}
-            </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredDishes.map((dish) => {
+                    return (
+                      <div
+                        key={dish.id}
+                        className="bg-white dark:bg-zinc-900 rounded-3xl p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm space-y-3 hover:border-emerald-500/40 transition"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {dish.category && (
+                                <span className="text-[10px] font-bold uppercase tracking-wider bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-2 py-0.5 rounded-full">
+                                  {dish.category === 'breakfast'
+                                    ? 'Desayuno'
+                                    : dish.category === 'lunch'
+                                    ? 'Comida'
+                                    : dish.category === 'dinner'
+                                    ? 'Cena'
+                                    : dish.category === 'snack'
+                                    ? 'Snack'
+                                    : 'Platillo'}
+                                </span>
+                              )}
+                              <h4
+                                onClick={() => setSelectedRecipeForModal(dish)}
+                                className="text-sm font-bold text-zinc-900 dark:text-white hover:text-emerald-600 cursor-pointer transition"
+                              >
+                                {dish.name}
+                              </h4>
+                              {partner && dish.is_shared_with_partner && (
+                                <span className="text-[10px] font-medium bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 px-2 py-0.5 rounded-full border border-teal-200 dark:border-teal-800 flex items-center gap-1">
+                                  <Users className="w-3 h-3" />
+                                  <span>Compartido</span>
+                                </span>
+                              )}
+                            </div>
+                            {dish.description && (
+                              <p className="text-xs text-zinc-500 mt-0.5 line-clamp-1">{dish.description}</p>
+                            )}
+                          </div>
+
+                          <button
+                            onClick={() => handleDeleteDish(dish.id)}
+                            className="text-zinc-400 hover:text-red-500 p-1 transition"
+                            title="Eliminar platillo"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Tarjeta de Macros por Porción vs Receta Completa */}
+                        <div
+                          onClick={() => setSelectedRecipeForModal(dish)}
+                          className="grid grid-cols-2 gap-2 bg-zinc-50 dark:bg-zinc-800/50 p-3 rounded-2xl border border-zinc-200/60 dark:border-zinc-700/60 text-xs cursor-pointer hover:bg-emerald-50/40 dark:hover:bg-emerald-950/20 transition"
+                        >
+                          <div>
+                            <span className="text-[10px] text-zinc-400 uppercase font-semibold block">
+                              Por {dish.serving_name}
+                            </span>
+                            <span className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                              {dish.calories_per_serving} kcal
+                            </span>
+                            <div className="text-[11px] text-zinc-500 mt-0.5">
+                              P: <strong className="text-zinc-800 dark:text-zinc-200">{dish.protein_per_serving}g</strong> • C: {dish.carbs_per_serving}g • G: {dish.fat_per_serving}g
+                            </div>
+                          </div>
+
+                          <div className="border-l border-zinc-200 dark:border-zinc-700 pl-3 flex flex-col justify-center">
+                            <span className="text-[10px] text-zinc-400 uppercase font-semibold block">
+                              Rinde {dish.total_servings} porc. {dish.total_weight_g ? `(~${Math.round(dish.total_weight_g / (dish.total_servings || 1))}g)` : ''}
+                            </span>
+                            <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                              {dish.total_calories} kcal totales
+                            </span>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 font-semibold flex items-center gap-0.5">
+                              <ChefHat className="w-3 h-3 text-emerald-500" />
+                              <span>Ver receta y cocinar</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Botones de acción */}
+                        <div className="flex items-center justify-between gap-2 pt-1">
+                          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                            <button
+                              onClick={() => setSelectedRecipeForModal(dish)}
+                              className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-xs active:scale-95 cursor-pointer"
+                              title="Ver receta, ingredientes escalados e instrucciones para cocinar"
+                            >
+                              <ChefHat className="w-3.5 h-3.5" />
+                              <span>Cocinar</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleOpenScheduleModal(dish)}
+                              className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition cursor-pointer"
+                              title="Programar para Meal Prep o días específicos"
+                            >
+                              <Calendar className="w-3.5 h-3.5" />
+                              <span>Programar</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleLogPortionToday(dish, 1)}
+                              className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-300 transition active:scale-95 cursor-pointer"
+                              title="Registrar 1 porción consumida en el diario de hoy"
+                            >
+                              <Check className="w-3.5 h-3.5 text-emerald-500" />
+                              <span>Comer hoy</span>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0 ml-auto">
+                            <button
+                              onClick={() => handleEditDish(dish)}
+                              className="p-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer"
+                              title="Editar ingredientes, marcas o porciones"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+
+                            <button
+                              onClick={() => setSelectedDishForNutrition(dish)}
+                              className="p-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer"
+                              title="Ver tabla nutrimental detallada"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
-        </>
+        </div>
       )}
 
       {/* 2.5 PESTAÑA: DESPENSA & INGREDIENTES */}
@@ -1570,7 +1768,7 @@ export default function DishManager() {
 
       {/* 3. PESTAÑA: BIBLIOTECA (STARTER RECIPES) */}
       {activeTab === 'library' && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl border border-emerald-200 dark:border-emerald-800/60 flex items-start gap-2.5 text-xs text-emerald-800 dark:text-emerald-200">
             <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
             <p className="leading-relaxed">
@@ -1578,99 +1776,184 @@ export default function DishManager() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-3">
-            {STARTER_RECIPES.map((recipe) => {
-              const isAlreadyInMyDishes = dishes.some(
-                (d) => d.name.toLowerCase().trim() === recipe.name.toLowerCase().trim()
-              );
+          {/* Buscador de biblioteca */}
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+            <input
+              type="text"
+              placeholder="Buscar en la biblioteca por nombre o ingrediente (ej. Salmón, Omelette, Bowl, Avena)..."
+              value={librarySearchQuery}
+              onChange={(e) => setLibrarySearchQuery(e.target.value)}
+              className="w-full pl-9 pr-8 py-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-emerald-500 shadow-xs"
+            />
+            {librarySearchQuery && (
+              <button
+                onClick={() => setLibrarySearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            )}
+          </div>
 
-              return (
-                <div
-                  key={recipe.id}
-                  onClick={() => handleCookFromLibrary(recipe)}
-                  className="bg-white dark:bg-zinc-900 rounded-3xl p-4 sm:p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm hover:border-emerald-500 transition cursor-pointer flex flex-col justify-between space-y-3"
+          {/* Chips de filtro por clasificación en biblioteca */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+            {libraryFilterCategories.map((cat) => (
+              <button
+                key={cat.key}
+                type="button"
+                onClick={() => {
+                  setLibraryCategoryFilter((prev) => (prev === cat.key ? 'all' : cat.key));
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition flex items-center gap-1.5 border cursor-pointer select-none active:scale-95 ${
+                  libraryCategoryFilter === cat.key
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                    : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700'
+                }`}
+              >
+                <span>{cat.label}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold flex items-center gap-1 ${
+                    libraryCategoryFilter === cat.key
+                      ? 'bg-emerald-700 text-white'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
+                  }`}
                 >
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-2 py-0.5 rounded-full">
-                          {recipe.category === 'breakfast'
-                            ? 'Desayuno'
-                            : recipe.category === 'lunch'
-                            ? 'Comida'
-                            : recipe.category === 'dinner'
-                            ? 'Cena'
-                            : 'Snack'}
+                  <span>{cat.count}</span>
+                  {libraryCategoryFilter === cat.key && cat.key !== 'all' && (
+                    <span className="text-[10px] opacity-80 hover:opacity-100 font-bold ml-0.5" title="Quitar filtro">
+                      ✕
+                    </span>
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* Listado de recetas o estado vacío */}
+          {filteredLibraryRecipes.length === 0 ? (
+            <div className="text-center py-10 bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 p-6 space-y-3">
+              <BookOpen className="w-10 h-10 mx-auto text-zinc-300 dark:text-zinc-700" />
+              <div>
+                <p className="font-bold text-zinc-700 dark:text-zinc-300 text-sm">
+                  {librarySearchQuery
+                    ? 'No se encontraron recetas con esa búsqueda'
+                    : 'No hay recetas en esta categoría'}
+                </p>
+                <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto">
+                  {librarySearchQuery
+                    ? 'Intenta con otro término o ingrediente, o elimina los filtros aplicados.'
+                    : 'Prueba seleccionando otra clasificación para explorar las recetas.'}
+                </p>
+              </div>
+              {(librarySearchQuery || libraryCategoryFilter !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLibrarySearchQuery('');
+                    setLibraryCategoryFilter('all');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-xl text-xs font-bold transition cursor-pointer"
+                >
+                  <span>Limpiar filtros</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3">
+              {filteredLibraryRecipes.map((recipe) => {
+                const isAlreadyInMyDishes = dishes.some(
+                  (d) => d.name.toLowerCase().trim() === recipe.name.toLowerCase().trim()
+                );
+
+                return (
+                  <div
+                    key={recipe.id}
+                    onClick={() => handleCookFromLibrary(recipe)}
+                    className="bg-white dark:bg-zinc-900 rounded-3xl p-4 sm:p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm hover:border-emerald-500 transition cursor-pointer flex flex-col justify-between space-y-3"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-2 py-0.5 rounded-full">
+                            {recipe.category === 'breakfast'
+                              ? 'Desayuno'
+                              : recipe.category === 'lunch'
+                              ? 'Comida'
+                              : recipe.category === 'dinner'
+                              ? 'Cena'
+                              : 'Snack'}
+                          </span>
+                          {isAlreadyInMyDishes && (
+                            <span className="text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-200/60 dark:border-emerald-800/60">
+                              ✓ En tus platillos
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+                          {recipe.prep_time_minutes !== undefined && (
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {recipe.prep_time_minutes + (recipe.cook_time_minutes || 0)} min
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
+                        {recipe.name}
+                      </h4>
+                      <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2 leading-relaxed">
+                        {recipe.description}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800 text-xs">
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                          {recipe.calories_per_serving} kcal
                         </span>
-                        {isAlreadyInMyDishes && (
-                          <span className="text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-200/60 dark:border-emerald-800/60">
-                            ✓ En tus platillos
-                          </span>
-                        )}
+                        <span className="text-[11px] text-zinc-400">
+                          P: <strong className="text-zinc-700 dark:text-zinc-300">{recipe.protein_per_serving}g</strong> • C: {recipe.carbs_per_serving}g • G: {recipe.fat_per_serving}g
+                        </span>
                       </div>
 
-                      <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-                        {recipe.prep_time_minutes !== undefined && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {recipe.prep_time_minutes + (recipe.cook_time_minutes || 0)} min
-                          </span>
+                      <div className="flex items-center gap-2">
+                        {!isAlreadyInMyDishes && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCloneTemplate(recipe);
+                            }}
+                            className="text-[11px] bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 px-2.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer"
+                            title="Guardar en Mis Platillos sin abrir"
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>Clonar</span>
+                          </button>
                         )}
-                      </div>
-                    </div>
 
-                    <h4 className="text-sm font-bold text-zinc-900 dark:text-white">
-                      {recipe.name}
-                    </h4>
-                    <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2 leading-relaxed">
-                      {recipe.description}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800 text-xs">
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
-                        {recipe.calories_per_serving} kcal
-                      </span>
-                      <span className="text-[11px] text-zinc-400">
-                        P: <strong className="text-zinc-700 dark:text-zinc-300">{recipe.protein_per_serving}g</strong> • C: {recipe.carbs_per_serving}g • G: {recipe.fat_per_serving}g
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {!isAlreadyInMyDishes && (
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleCloneTemplate(recipe);
+                            handleCookFromLibrary(recipe);
                           }}
-                          className="text-[11px] bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 px-2.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1"
-                          title="Guardar en Mis Platillos sin abrir"
+                          className="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1 shadow-xs active:scale-95 cursor-pointer"
+                          title="Cocinar (la agrega a Mis Platillos y abre el escalador)"
                         >
-                          <Copy className="w-3 h-3" />
-                          <span>Clonar</span>
+                          <ChefHat className="w-3.5 h-3.5" />
+                          <span>Cocinar</span>
                         </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCookFromLibrary(recipe);
-                        }}
-                        className="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1 shadow-xs active:scale-95"
-                        title="Cocinar (la agrega a Mis Platillos y abre el escalador)"
-                      >
-                        <ChefHat className="w-3.5 h-3.5" />
-                        <span>Cocinar</span>
-                      </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

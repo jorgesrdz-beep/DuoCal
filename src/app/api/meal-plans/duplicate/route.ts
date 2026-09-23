@@ -17,6 +17,7 @@ export async function POST(req: Request) {
       source_day = 1, // Por defecto Lunes
       target_days = [2, 3, 4, 5], // Días destino
       meal_types = ['breakfast', 'lunch', 'dinner', 'snack'], // qué comidas duplicar
+      selected_item_ids,
     } = body;
 
     const cleanTargetDays = Array.isArray(target_days)
@@ -32,18 +33,20 @@ export async function POST(req: Request) {
 
     const db = await getDb();
 
-    // Obtener los items del día fuente
+    // Obtener los items del día fuente (filtrando por selected_item_ids si fue especificado)
     const rawSourceItems = db.meal_plans.filter(
       (p) =>
         p.user_id === userId &&
         p.week_start_date === week_start_date &&
         p.day_of_week === Number(source_day) &&
-        meal_types.includes(p.meal_type)
+        (Array.isArray(selected_item_ids) && selected_item_ids.length > 0
+          ? selected_item_ids.includes(p.id)
+          : meal_types.includes(p.meal_type))
     );
 
     if (rawSourceItems.length === 0) {
       return NextResponse.json(
-        { error: 'El día seleccionado como origen no tiene comidas planeadas para duplicar.' },
+        { error: 'No se encontraron comidas planeadas seleccionadas para duplicar.' },
         { status: 400 }
       );
     }
@@ -59,7 +62,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // 1. Limpiar completamente los días destino en Supabase en una sola consulta atómica
+    // Solo limpiar en los días destino los meal_types que realmente estamos replicando
+    const effectiveMealTypes = [...new Set(sourceItems.map((p) => p.meal_type))];
+
+    // 1. Limpiar en Supabase solo las comidas afectadas en una sola consulta atómica
     if (isServiceRoleConfigured) {
       const { error: delErr } = await supabaseAdmin
         .from('meal_plans')
@@ -67,7 +73,7 @@ export async function POST(req: Request) {
         .eq('user_id', userId)
         .eq('week_start_date', week_start_date)
         .in('day_of_week', cleanTargetDays)
-        .in('meal_type', meal_types);
+        .in('meal_type', effectiveMealTypes);
 
       if (delErr) {
         console.error('Error eliminando comidas previas en Supabase:', delErr);
@@ -81,7 +87,7 @@ export async function POST(req: Request) {
           p.user_id === userId &&
           p.week_start_date === week_start_date &&
           cleanTargetDays.includes(p.day_of_week) &&
-          meal_types.includes(p.meal_type)
+          effectiveMealTypes.includes(p.meal_type)
         )
     );
 

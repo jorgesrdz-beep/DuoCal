@@ -119,7 +119,7 @@ export function getFoodUnitInfo(food: Food) {
 }
 
 export default function DailyDiary() {
-  const { activeGoal } = useAuth();
+  const { user, activeGoal } = useAuth();
   const [selectedDate, setSelectedDate] = useState(() => getLocalDateString());
   const [logs, setLogs] = useState<any[]>([]);
 
@@ -132,6 +132,8 @@ export default function DailyDiary() {
   }, []);
   const [totals, setTotals] = useState({ calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0 });
   const [waterIntake, setWaterIntake] = useState(0);
+  const [isWaterModalOpen, setIsWaterModalOpen] = useState(false);
+  const [customWaterInput, setCustomWaterInput] = useState('');
   const [loading, setLoading] = useState(true);
 
   // Modal de búsqueda / añadir comida
@@ -368,20 +370,87 @@ export default function DailyDiary() {
     fetchLogs(selectedDate);
     fetchPlannedMeals(selectedDate);
     fetchDishes();
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(`duocal_water_${selectedDate}`);
-      setWaterIntake(saved ? parseInt(saved, 10) : 0);
-    }
-  }, [selectedDate]);
 
-  const handleAdjustWater = (delta: number) => {
-    setWaterIntake((prev) => {
-      const updated = Math.max(0, prev + delta);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(`duocal_water_${selectedDate}`, String(updated));
+    // 1. Carga optimista inmediata de localStorage
+    if (typeof window !== 'undefined') {
+      const userKey = user?.id ? `duocal_water_${user.id}_${selectedDate}` : null;
+      const legacyKey = `duocal_water_${selectedDate}`;
+      const saved = (userKey ? localStorage.getItem(userKey) : null) || localStorage.getItem(legacyKey);
+      if (saved !== null && !isNaN(parseInt(saved, 10))) {
+        setWaterIntake(parseInt(saved, 10));
+      } else {
+        setWaterIntake(0);
       }
-      return updated;
-    });
+    }
+
+    // 2. Sincronización autoritativa desde el servidor (/api/water)
+    fetch(`/api/water?date=${selectedDate}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && typeof data.water_ml === 'number') {
+          setWaterIntake(data.water_ml);
+          if (typeof window !== 'undefined') {
+            const key = user?.id ? `duocal_water_${user.id}_${selectedDate}` : `duocal_water_${selectedDate}`;
+            localStorage.setItem(key, String(data.water_ml));
+            localStorage.setItem(`duocal_water_${selectedDate}`, String(data.water_ml));
+          }
+        } else if (typeof window !== 'undefined') {
+          // Si el servidor no tiene registro para este día pero localStorage sí, respaldarlo
+          const legacy = localStorage.getItem(`duocal_water_${selectedDate}`);
+          if (legacy && parseInt(legacy, 10) > 0) {
+            const legacyVal = parseInt(legacy, 10);
+            fetch('/api/water', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ date: selectedDate, water_ml: legacyVal }),
+            }).catch(() => {});
+          }
+        }
+      })
+      .catch(() => {});
+  }, [selectedDate, user?.id]);
+
+  const handleAdjustWater = async (delta: number) => {
+    const updated = Math.max(0, waterIntake + delta);
+    setWaterIntake(updated);
+
+    if (typeof window !== 'undefined') {
+      const key = user?.id ? `duocal_water_${user.id}_${selectedDate}` : `duocal_water_${selectedDate}`;
+      localStorage.setItem(key, String(updated));
+      localStorage.setItem(`duocal_water_${selectedDate}`, String(updated));
+    }
+
+    try {
+      await fetch('/api/water', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: selectedDate, water_ml: updated }),
+      });
+    } catch {
+      // Ignorar error de red puntual
+    }
+  };
+
+  const handleSetExactWater = async (amount: number) => {
+    const safeAmount = Math.max(0, Math.round(amount));
+    setWaterIntake(safeAmount);
+
+    if (typeof window !== 'undefined') {
+      const key = user?.id ? `duocal_water_${user.id}_${selectedDate}` : `duocal_water_${selectedDate}`;
+      localStorage.setItem(key, String(safeAmount));
+      localStorage.setItem(`duocal_water_${selectedDate}`, String(safeAmount));
+    }
+
+    try {
+      await fetch('/api/water', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: selectedDate, water_ml: safeAmount }),
+      });
+    } catch {
+      // Ignorar error de red puntual
+    }
+    setIsWaterModalOpen(false);
   };
 
   const changeDate = (days: number) => {
@@ -636,9 +705,23 @@ export default function DailyDiary() {
             onChange={(e) => setSelectedDate(e.target.value)}
             className="bg-transparent text-sm font-bold text-zinc-900 dark:text-white border-0 text-center cursor-pointer focus:outline-none"
           />
-          <span className="block text-[11px] text-zinc-400">
-            {selectedDate === getLocalDateString() ? 'Hoy' : 'Día seleccionado'}
-          </span>
+          {selectedDate === getLocalDateString() ? (
+            <span className="block text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+              • Hoy
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSelectedDate(getLocalDateString())}
+              className="inline-flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 font-bold hover:underline cursor-pointer"
+              title="Volver a la fecha de hoy"
+            >
+              <span>Día seleccionado</span>
+              <span className="bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.5 rounded-full text-[10px] text-amber-700 dark:text-amber-300">
+                Volver a Hoy ↩
+              </span>
+            </button>
+          )}
         </div>
 
         <button
@@ -796,7 +879,7 @@ export default function DailyDiary() {
             </span>
           </div>
 
-          {/* Registro de Agua con 1-Toque (+250ml) */}
+          {/* Registro de Agua con 1-Toque (+250ml, +500ml) y entrada exacta */}
           <div className="bg-sky-50/50 dark:bg-sky-950/20 p-3 rounded-2xl border border-sky-200/50 dark:border-sky-800/40 flex flex-col justify-between">
             <div>
               <div className="flex justify-between items-center text-xs mb-0.5">
@@ -804,9 +887,18 @@ export default function DailyDiary() {
                   <Droplets className="w-3.5 h-3.5 text-sky-500" />
                   <span>Hidratación</span>
                 </span>
-                <span className="font-black text-sky-700 dark:text-sky-300 text-xs">
-                  {waterIntake} ml
-                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomWaterInput(String(waterIntake));
+                    setIsWaterModalOpen(true);
+                  }}
+                  className="font-black text-sky-700 dark:text-sky-300 text-xs hover:bg-sky-100 dark:hover:bg-sky-900/60 px-1.5 py-0.5 rounded-md flex items-center gap-1 transition cursor-pointer"
+                  title="Haz clic para ingresar o corregir una cantidad exacta de agua"
+                >
+                  <span>{waterIntake} ml</span>
+                  <Pencil className="w-2.5 h-2.5 opacity-60" />
+                </button>
               </div>
               <span className="text-[10px] text-zinc-400 block mb-1.5">
                 Basal {targetWater} ml (+500ml si entrenas)
@@ -821,7 +913,7 @@ export default function DailyDiary() {
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-0.5">
+              <div className="flex items-center justify-between pt-0.5 flex-wrap gap-1">
                 <span className="text-[10px] text-sky-700 dark:text-sky-300 font-medium">
                   {targetWater - waterIntake > 0
                     ? `Faltan ${targetWater - waterIntake} ml`
@@ -832,7 +924,7 @@ export default function DailyDiary() {
                     type="button"
                     onClick={() => handleAdjustWater(-250)}
                     disabled={waterIntake <= 0}
-                    className="w-6 h-6 rounded-lg bg-sky-100 dark:bg-sky-900/60 hover:bg-sky-200 text-sky-700 dark:text-sky-300 text-xs font-bold flex items-center justify-center disabled:opacity-30 transition"
+                    className="w-6 h-6 rounded-lg bg-sky-100 dark:bg-sky-900/60 hover:bg-sky-200 text-sky-700 dark:text-sky-300 text-xs font-bold flex items-center justify-center disabled:opacity-30 transition cursor-pointer"
                     title="Restar 250 ml (1 vaso)"
                   >
                     -
@@ -840,10 +932,18 @@ export default function DailyDiary() {
                   <button
                     type="button"
                     onClick={() => handleAdjustWater(250)}
-                    className="px-2 h-6 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center justify-center transition shadow-xs"
+                    className="px-2 h-6 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-bold flex items-center justify-center transition shadow-xs cursor-pointer"
                     title="Sumar 250 ml (1 vaso)"
                   >
                     +250ml
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAdjustWater(500)}
+                    className="px-2 h-6 rounded-lg bg-sky-100 dark:bg-sky-900/50 hover:bg-sky-200 dark:hover:bg-sky-800 text-sky-800 dark:text-sky-200 text-[11px] font-bold flex items-center justify-center transition cursor-pointer"
+                    title="Sumar 500 ml (1 botella o shaker)"
+                  >
+                    +500ml
                   </button>
                 </div>
               </div>
@@ -892,6 +992,10 @@ export default function DailyDiary() {
           const mealLogs = logs.filter((l) => l.meal_type === meal.type);
           const mealCals = mealLogs.reduce((sum, item) => sum + item.calories, 0);
           const plannedForThisMeal = plannedMealsForDay.filter((p) => p.meal_type === meal.type);
+          const unloggedPlanned = plannedForThisMeal.filter((planned) => {
+            const baseName = planned.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
+            return !mealLogs.some((l) => l.food_name.toLowerCase().includes(baseName));
+          });
 
           return (
             <div
@@ -916,30 +1020,10 @@ export default function DailyDiary() {
                 </button>
               </div>
 
-              {/* Tarjeta de comida planeada si existe en el Plan Semanal */}
-              {plannedForThisMeal.length > 0 && (
+              {/* Tarjeta de comida planeada si existe en el Plan Semanal y aún no ha sido registrada */}
+              {unloggedPlanned.length > 0 && (
                 <div className="space-y-2 mb-3">
-                  {plannedForThisMeal.map((planned) => {
-                    const baseName = planned.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
-                    const isLogged = mealLogs.some((l) =>
-                      l.food_name.toLowerCase().includes(baseName)
-                    );
-
-                    if (isLogged) {
-                      return (
-                        <div
-                          key={planned.id}
-                          className="flex items-center justify-between p-2 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-900/40 text-[11px] text-emerald-700 dark:text-emerald-400"
-                        >
-                          <span className="flex items-center gap-1 font-medium">
-                            <Check className="w-3.5 h-3.5" />
-                            <span>Planeado y comido: <strong>{planned.custom_name}</strong></span>
-                          </span>
-                          <span className="text-[10px] font-bold">{planned.calories} kcal</span>
-                        </div>
-                      );
-                    }
-
+                  {unloggedPlanned.map((planned) => {
                     return (
                       <div
                         key={planned.id}
@@ -1009,7 +1093,7 @@ export default function DailyDiary() {
                 </div>
               )}
 
-              {mealLogs.length === 0 && plannedForThisMeal.length === 0 ? (
+              {mealLogs.length === 0 && unloggedPlanned.length === 0 ? (
                 <p className="text-xs text-zinc-400 italic py-1">Sin alimentos registrados aún.</p>
               ) : (
                 <div className="space-y-2">
@@ -1884,6 +1968,135 @@ export default function DailyDiary() {
                   <span>Guardar Cambios</span>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para ingresar cantidad exacta de agua / presets rápidos */}
+      {isWaterModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-zinc-900 rounded-3xl p-5 max-w-sm w-full border border-zinc-200 dark:border-zinc-800 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-sky-100 dark:bg-sky-900/60 text-sky-600 dark:text-sky-400 flex items-center justify-center">
+                  <Droplets className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Registrar Hidratación</h3>
+                  <span className="text-[11px] text-zinc-400">
+                    Fecha: {selectedDate === getLocalDateString() ? 'Hoy' : selectedDate}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsWaterModalOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-600 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Input manual */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                Cantidad de agua acumulada (ml):
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  max="15000"
+                  step="50"
+                  value={customWaterInput}
+                  onChange={(e) => setCustomWaterInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const parsed = Number(customWaterInput);
+                      if (!isNaN(parsed)) {
+                        handleSetExactWater(parsed);
+                      }
+                    }
+                  }}
+                  placeholder="ej. 2500"
+                  className="flex-1 px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm font-bold text-zinc-900 dark:text-white focus:outline-emerald-500"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const parsed = Number(customWaterInput);
+                    if (!isNaN(parsed)) {
+                      handleSetExactWater(parsed);
+                    }
+                  }}
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer"
+                >
+                  Guardar
+                </button>
+              </div>
+            </div>
+
+            {/* Presets rápidos */}
+            <div className="space-y-2">
+              <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                Atajos y Presets:
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSetExactWater(targetWater)}
+                  className="p-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 hover:bg-sky-100 dark:hover:bg-sky-900/60 transition text-left text-xs cursor-pointer"
+                >
+                  <span className="font-bold text-sky-800 dark:text-sky-300 block">🎯 Meta ({targetWater} ml)</span>
+                  <span className="text-[10px] text-sky-600 dark:text-sky-400">Meta calculada completa</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSetExactWater(2000)}
+                  className="p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-750 transition text-left text-xs cursor-pointer"
+                >
+                  <span className="font-bold text-zinc-800 dark:text-zinc-200 block">🥤 2,000 ml</span>
+                  <span className="text-[10px] text-zinc-400">2 Litros estándar</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleAdjustWater(500)}
+                  className="p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-750 transition text-left text-xs cursor-pointer"
+                >
+                  <span className="font-bold text-zinc-800 dark:text-zinc-200 block">+500 ml</span>
+                  <span className="text-[10px] text-zinc-400">1 Botella / shaker</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleAdjustWater(1000)}
+                  className="p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-750 transition text-left text-xs cursor-pointer"
+                >
+                  <span className="font-bold text-zinc-800 dark:text-zinc-200 block">+1,000 ml</span>
+                  <span className="text-[10px] text-zinc-400">1 Termo grande</span>
+                </button>
+              </div>
+
+              <div className="pt-2 flex justify-between items-center text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleSetExactWater(0)}
+                  className="text-zinc-400 hover:text-red-500 text-[11px] transition cursor-pointer"
+                >
+                  Reiniciar a 0 ml
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsWaterModalOpen(false)}
+                  className="text-zinc-500 dark:text-zinc-400 font-semibold cursor-pointer"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </div>
         </div>

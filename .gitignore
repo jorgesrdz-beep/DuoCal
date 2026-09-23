@@ -43,3 +43,6 @@ next-env.d.ts
 # supabase cli temp
 supabase/.temp/
 
+# local runtime data
+/.data/
+

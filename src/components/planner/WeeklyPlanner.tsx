@@ -94,6 +94,7 @@ export default function WeeklyPlanner() {
   // Modal para duplicar día (Meal Prep)
   const [isDuplicateOpen, setIsDuplicateOpen] = useState(false);
   const [targetDays, setTargetDays] = useState<number[]>([2, 3, 4, 5]);
+  const [selectedItemIdsToDuplicate, setSelectedItemIdsToDuplicate] = useState<string[]>([]);
   const [duplicateLoading, setDuplicateLoading] = useState(false);
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
   const [duplicateSuccess, setDuplicateSuccess] = useState<string | null>(null);
@@ -452,7 +453,30 @@ export default function WeeklyPlanner() {
     }
   };
 
-  const handleOpenDuplicateModal = () => {
+  const handleOpenDuplicateModal = (presetItemId?: string | unknown) => {
+    const currentDayPlans = plans.filter((p) => p.day_of_week === selectedDay);
+    if (typeof presetItemId === 'string' && presetItemId) {
+      setSelectedItemIdsToDuplicate([presetItemId]);
+    } else {
+      // Detección inteligente: filtrar aquellos platillos que NO están ya presentes en los otros días de la semana
+      const uncopied = currentDayPlans.filter((p) => {
+        const baseName = p.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
+        const alreadyInOtherDays = plans.some(
+          (other) =>
+            other.day_of_week !== selectedDay &&
+            other.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase().includes(baseName)
+        );
+        return !alreadyInOtherDays;
+      });
+
+      // Si hay platillos no copiados (como el recién añadido), sugerimos SOLO esos por defecto
+      if (uncopied.length > 0) {
+        setSelectedItemIdsToDuplicate(uncopied.map((p) => p.id));
+      } else {
+        // Si todos ya están o ninguno está, preseleccionamos todos
+        setSelectedItemIdsToDuplicate(currentDayPlans.map((p) => p.id));
+      }
+    }
     // Por defecto sugerir los demás días entre semana (L-V) si es día de semana, o toda la semana
     const remainingWeekdays = [1, 2, 3, 4, 5].filter((d) => d !== selectedDay);
     setTargetDays(remainingWeekdays.length > 0 ? remainingWeekdays : [1, 2, 3, 4, 5, 6, 7].filter((d) => d !== selectedDay));
@@ -462,8 +486,17 @@ export default function WeeklyPlanner() {
   };
 
   const handleDuplicateToWeekdays = async () => {
+    const currentDayPlans = plans.filter((p) => p.day_of_week === selectedDay);
+    const validSelectedIds = currentDayPlans
+      .filter((p) => selectedItemIdsToDuplicate.includes(p.id))
+      .map((p) => p.id);
+
     if (targetDays.length === 0) {
       setDuplicateError('Por favor selecciona al menos un día destino.');
+      return;
+    }
+    if (validSelectedIds.length === 0) {
+      setDuplicateError('Selecciona al menos un platillo para duplicar.');
       return;
     }
 
@@ -479,6 +512,7 @@ export default function WeeklyPlanner() {
           week_start_date: weekStart,
           source_day: selectedDay,
           target_days: targetDays,
+          selected_item_ids: validSelectedIds,
         }),
       });
 
@@ -761,8 +795,8 @@ export default function WeeklyPlanner() {
 
             {/* Botón Duplicar día a entre semana */}
             <button
-              onClick={handleOpenDuplicateModal}
-              className="flex items-center gap-1 text-xs font-semibold bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 px-3 py-2 rounded-xl transition"
+              onClick={() => handleOpenDuplicateModal()}
+              className="flex items-center gap-1 text-xs font-semibold bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 px-3 py-2 rounded-xl transition cursor-pointer"
             >
               <Copy className="w-3.5 h-3.5 text-emerald-500" />
               <span className="hidden sm:inline">Repetir en semana</span>
@@ -833,7 +867,7 @@ export default function WeeklyPlanner() {
                           <div className="flex items-center gap-1 shrink-0">
                             <button
                               onClick={() => handleOpenPlanRecipe(item)}
-                              className="px-2.5 py-1 bg-emerald-100/80 hover:bg-emerald-200 dark:bg-emerald-950/70 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 font-bold rounded-lg text-[10px] flex items-center gap-1 transition shadow-2xs"
+                              className="px-2.5 py-1 bg-emerald-100/80 hover:bg-emerald-200 dark:bg-emerald-950/70 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 font-bold rounded-lg text-[10px] flex items-center gap-1 transition shadow-2xs cursor-pointer"
                               title="Ver receta, cantidades para preparar e instrucciones de cocina"
                             >
                               <ChefHat className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -841,8 +875,16 @@ export default function WeeklyPlanner() {
                             </button>
 
                             <button
+                              onClick={() => handleOpenDuplicateModal(item.id)}
+                              className="p-1 text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition cursor-pointer"
+                              title="Repetir solo este platillo en otros días de la semana"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
                               onClick={() => handleDeletePlan(item.id)}
-                              className="text-zinc-400 hover:text-red-500 p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition"
+                              className="text-zinc-400 hover:text-red-500 p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition cursor-pointer"
                               title="Eliminar del plan"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -1302,10 +1344,9 @@ export default function WeeklyPlanner() {
               </button>
             </div>
 
-            {/* Verificación de comidas existentes en el día origen */}
+            {/* Selección de comidas a duplicar */}
             {(() => {
               const currentDayPlans = plans.filter((p) => p.day_of_week === selectedDay);
-              const totalCals = currentDayPlans.reduce((sum, item) => sum + (item.calories || 0), 0);
 
               if (currentDayPlans.length === 0) {
                 return (
@@ -1326,18 +1367,108 @@ export default function WeeklyPlanner() {
               }
 
               return (
-                <div className="p-2.5 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/50 mb-3 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-bold text-emerald-800 dark:text-emerald-300">
-                      {currentDayPlans.length} {currentDayPlans.length === 1 ? 'comida' : 'comidas'} a copiar
-                    </span>
-                    <span className="text-[10px] text-zinc-500 dark:text-zinc-400 block truncate max-w-[190px]">
-                      {currentDayPlans.map((p) => p.custom_name).join(', ')}
-                    </span>
+                <div className="mb-4 space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-zinc-500 font-semibold">Platillos a copiar:</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedItemIdsToDuplicate(currentDayPlans.map((p) => p.id));
+                          setDuplicateError(null);
+                        }}
+                        className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold hover:underline cursor-pointer"
+                      >
+                        Todos ({currentDayPlans.length})
+                      </button>
+                      <span className="text-zinc-300 dark:text-zinc-700">•</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedItemIdsToDuplicate([]);
+                          setDuplicateError(null);
+                        }}
+                        className="text-[10px] text-zinc-400 hover:underline cursor-pointer"
+                      >
+                        Ninguno
+                      </button>
+                    </div>
                   </div>
-                  <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 shrink-0">
-                    {totalCals} kcal
-                  </span>
+
+                  <div className="space-y-1.5 max-h-44 overflow-y-auto pr-0.5">
+                    {currentDayPlans.map((p) => {
+                      const isChecked = selectedItemIdsToDuplicate.includes(p.id);
+                      const mealLabel =
+                        p.meal_type === 'breakfast'
+                          ? 'Desayuno'
+                          : p.meal_type === 'lunch'
+                          ? 'Comida'
+                          : p.meal_type === 'dinner'
+                          ? 'Cena'
+                          : 'Snack';
+
+                      const baseName = p.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
+                      const otherDays = [
+                        ...new Set(
+                          plans
+                            .filter(
+                              (other) =>
+                                other.day_of_week !== selectedDay &&
+                                other.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase().includes(baseName)
+                            )
+                            .map((other) => other.day_of_week)
+                        ),
+                      ];
+
+                      return (
+                        <div
+                          key={p.id}
+                          onClick={() => {
+                            setSelectedItemIdsToDuplicate((prev) =>
+                              prev.includes(p.id) ? prev.filter((id) => id !== p.id) : [...prev, p.id]
+                            );
+                            setDuplicateError(null);
+                          }}
+                          className={`flex items-center justify-between p-2.5 rounded-2xl border text-xs cursor-pointer transition select-none ${
+                            isChecked
+                              ? 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-400 dark:border-emerald-600 shadow-2xs'
+                              : 'bg-zinc-50 dark:bg-zinc-800/40 border-zinc-200/70 dark:border-zinc-700/60 opacity-60 hover:opacity-90'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 pr-1">
+                            <div
+                              className={`w-4 h-4 rounded-md border flex items-center justify-center transition shrink-0 ${
+                                isChecked
+                                  ? 'bg-emerald-600 border-emerald-600 text-white'
+                                  : 'border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900'
+                              }`}
+                            >
+                              {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+                            </div>
+                            <div className="truncate">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-semibold text-zinc-900 dark:text-white truncate">
+                                  {p.custom_name}
+                                </span>
+                                {otherDays.length > 0 ? (
+                                  <span className="text-[9px] bg-zinc-200/80 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 px-1.5 py-0.2 rounded-full font-medium shrink-0">
+                                    Ya en {otherDays.length} {otherDays.length === 1 ? 'día' : 'días'}
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.2 rounded-full font-bold shrink-0">
+                                    ✨ Nuevo (sin repetir)
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-zinc-400">
+                                {mealLabel} • {p.calories} kcal • P {p.protein_g}g
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })()}
@@ -1362,21 +1493,21 @@ export default function WeeklyPlanner() {
                 <button
                   type="button"
                   onClick={() => setTargetDays([1, 2, 3, 4, 5].filter((d) => d !== selectedDay))}
-                  className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition"
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition cursor-pointer"
                 >
                   Lunes-Viernes
                 </button>
                 <button
                   type="button"
                   onClick={() => setTargetDays([1, 2, 3, 4, 5, 6, 7].filter((d) => d !== selectedDay))}
-                  className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition"
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 transition cursor-pointer"
                 >
                   Toda la sem.
                 </button>
                 <button
                   type="button"
                   onClick={() => setTargetDays([])}
-                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition"
+                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition cursor-pointer"
                 >
                   Limpiar
                 </button>
@@ -1398,35 +1529,62 @@ export default function WeeklyPlanner() {
                 .map(({ day, label }) => {
                   const checked = targetDays.includes(day);
                   const isWeekend = day >= 6;
+
+                  // Ver si el día destino ya tiene los platillos seleccionados
+                  const currentDayPlans = plans.filter((p) => p.day_of_week === selectedDay);
+                  const selectedDishes = currentDayPlans.filter((p) =>
+                    selectedItemIdsToDuplicate.includes(p.id)
+                  );
+                  const targetDayPlans = plans.filter((p) => p.day_of_week === day);
+                  const alreadyHasDishes =
+                    selectedDishes.length > 0 &&
+                    selectedDishes.every((sd) => {
+                      const baseName = sd.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
+                      return targetDayPlans.some((tp) =>
+                        tp.custom_name.toLowerCase().includes(baseName)
+                      );
+                    });
+
                   return (
-                    <label
+                    <div
                       key={day}
-                      className={`flex items-center justify-between p-2.5 rounded-2xl border transition cursor-pointer text-xs ${
+                      onClick={() => {
+                        setTargetDays((prev) =>
+                          prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+                        );
+                        setDuplicateError(null);
+                      }}
+                      className={`flex items-center justify-between p-2.5 rounded-2xl border transition cursor-pointer text-xs select-none ${
                         checked
                           ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800'
                           : 'bg-zinc-50 dark:bg-zinc-800/60 border-zinc-200/80 dark:border-zinc-700/60 hover:bg-zinc-100 dark:hover:bg-zinc-800'
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => {
-                            setTargetDays((prev) =>
-                              checked ? prev.filter((d) => d !== day) : [...prev, day]
-                            );
-                            setDuplicateError(null);
-                          }}
-                          className="rounded-md accent-emerald-600 w-4 h-4 cursor-pointer"
-                        />
+                        <div
+                          className={`w-4 h-4 rounded-md border flex items-center justify-center transition shrink-0 ${
+                            checked
+                              ? 'bg-emerald-600 border-emerald-600 text-white'
+                              : 'border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900'
+                          }`}
+                        >
+                          {checked && <Check className="w-3 h-3 stroke-[3]" />}
+                        </div>
                         <span className="text-zinc-900 dark:text-white font-medium">{label}</span>
                       </div>
-                      {isWeekend && (
-                        <span className="text-[9px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-medium">
-                          Fin de semana
-                        </span>
-                      )}
-                    </label>
+                      <div className="flex items-center gap-1.5">
+                        {alreadyHasDishes && (
+                          <span className="text-[9px] bg-zinc-200/80 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400 px-1.5 py-0.5 rounded font-medium">
+                            Ya planeado aquí
+                          </span>
+                        )}
+                        {isWeekend && (
+                          <span className="text-[9px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-medium">
+                            Fin de semana
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   );
                 })}
             </div>
@@ -1436,7 +1594,7 @@ export default function WeeklyPlanner() {
               <button
                 type="button"
                 onClick={() => setIsDuplicateOpen(false)}
-                className="flex-1 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition"
+                className="flex-1 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition cursor-pointer"
               >
                 Cancelar
               </button>
@@ -1445,10 +1603,10 @@ export default function WeeklyPlanner() {
                 disabled={
                   duplicateLoading ||
                   targetDays.length === 0 ||
-                  plans.filter((p) => p.day_of_week === selectedDay).length === 0
+                  plans.filter((p) => p.day_of_week === selectedDay && selectedItemIdsToDuplicate.includes(p.id)).length === 0
                 }
                 onClick={handleDuplicateToWeekdays}
-                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-1.5"
+                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 {duplicateLoading ? (
                   <>
@@ -1459,7 +1617,12 @@ export default function WeeklyPlanner() {
                   <>
                     <Copy className="w-3.5 h-3.5" />
                     <span>
-                      Duplicar ({targetDays.length} {targetDays.length === 1 ? 'día' : 'días'})
+                      {(() => {
+                        const count = plans.filter(
+                          (p) => p.day_of_week === selectedDay && selectedItemIdsToDuplicate.includes(p.id)
+                        ).length;
+                        return `Repetir ${count} ${count === 1 ? 'platillo' : 'platillos'}`;
+                      })()}
                     </span>
                   </>
                 )}
