@@ -662,19 +662,30 @@ export default function DishManager() {
 
   const handleAddIngredientFromFood = (food: Food) => {
     const pieceWeight = estimatePieceWeight(food.name);
-    const isPieceFriendly = /(tomate|jitomate|zanahoria|calabac|huevo|aguacate|limon|platano|manzana|naranja|cebolla|papa)/i.test(food.name);
+    const isCerealOrProcessed = /(avena|cereal|harina|galleta|yogurt|leche|pan|barra)/i.test(food.name);
+    const isPieceFriendly = !isCerealOrProcessed && /(tomate|jitomate|zanahoria|calabac|huevo|aguacate|limon|platano|manzana|naranja|cebolla|papa)/i.test(food.name);
     const initialUnit: 'g' | 'kg' | 'pza' = isPieceFriendly ? 'pza' : 'g';
     const initialQty = isPieceFriendly ? 1 : (food.serving_size_g || 100);
     const calculatedGrams = isPieceFriendly ? pieceWeight : initialQty;
     const ratio = calculatedGrams / (food.serving_size_g || 100);
+
+    let rawFiber100 = Number((food as any).fiber_g || 0);
+    if (rawFiber100 <= 0) {
+      rawFiber100 = resolveIngredientFiber(
+        { food_id: food.id, ingredient_name: food.name, amount_g: 100 },
+        customFoods
+      );
+    }
 
     const b100 = {
       calories: Math.round((food.calories / (food.serving_size_g || 100)) * 100),
       protein_g: Number(((food.protein_g / (food.serving_size_g || 100)) * 100).toFixed(1)),
       carbs_g: Number(((food.carbs_g / (food.serving_size_g || 100)) * 100).toFixed(1)),
       fat_g: Number(((food.fat_g / (food.serving_size_g || 100)) * 100).toFixed(1)),
-      fiber_g: Number((((food.fiber_g || 0) / (food.serving_size_g || 100)) * 100).toFixed(1)),
+      fiber_g: rawFiber100,
     };
+
+    const calculatedFiber = Number(((rawFiber100 * calculatedGrams) / 100).toFixed(1));
 
     setIngredients((prev) => [
       ...prev,
@@ -690,7 +701,7 @@ export default function DishManager() {
         protein_g: Number((food.protein_g * ratio).toFixed(1)),
         carbs_g: Number((food.carbs_g * ratio).toFixed(1)),
         fat_g: Number((food.fat_g * ratio).toFixed(1)),
-        fiber_g: Number((((food.fiber_g || 0) * ratio)).toFixed(1)),
+        fiber_g: calculatedFiber,
         sodium_mg: 0,
       },
     ]);
@@ -811,6 +822,13 @@ export default function DishManager() {
         fiber_g: Number(((item.fiber_g / (item.amount_g || 1)) * 100).toFixed(1)),
       };
 
+      if (!b100.fiber_g || b100.fiber_g <= 0) {
+        b100.fiber_g = resolveIngredientFiber(
+          { food_id: item.food_id, ingredient_name: item.ingredient_name, amount_g: 100 },
+          customFoods
+        );
+      }
+
       const factor = calculatedGrams / 100;
       copy[index] = {
         ...item,
@@ -849,6 +867,14 @@ export default function DishManager() {
         fat_g: Number(((item.fat_g / (item.amount_g || 1)) * 100).toFixed(1)),
         fiber_g: Number(((item.fiber_g / (item.amount_g || 1)) * 100).toFixed(1)),
       };
+
+      if (!b100.fiber_g || b100.fiber_g <= 0) {
+        b100.fiber_g = resolveIngredientFiber(
+          { food_id: item.food_id, ingredient_name: item.ingredient_name, amount_g: 100 },
+          customFoods
+        );
+      }
+
       const factor = calculatedGrams / 100;
 
       copy[index] = {
@@ -875,7 +901,16 @@ export default function DishManager() {
   const previewTotalProt = ingredients.reduce((sum, i) => sum + i.protein_g, 0);
   const previewTotalCarbs = ingredients.reduce((sum, i) => sum + i.carbs_g, 0);
   const previewTotalFat = ingredients.reduce((sum, i) => sum + i.fat_g, 0);
-  const previewTotalFiber = ingredients.reduce((sum, i) => sum + (i.fiber_g || 0), 0);
+  const previewTotalFiber = ingredients.reduce((sum, i) => {
+    let fib = i.fiber_g;
+    if (!fib || fib <= 0) {
+      fib = resolveIngredientFiber(
+        { food_id: i.food_id, ingredient_name: i.ingredient_name, amount_g: i.amount_g },
+        customFoods
+      );
+    }
+    return sum + (fib || 0);
+  }, 0);
   const previewServings = Math.max(1, totalServings);
   const previewTotalWeightGrams = ingredients.reduce((sum, i) => sum + (i.amount_g || 0), 0);
   const previewServingWeightGrams = Math.round(previewTotalWeightGrams / previewServings);
@@ -988,7 +1023,13 @@ export default function DishManager() {
           prep_time_minutes: prepTime,
           cook_time_minutes: cookTime,
           instructions: instructions.length > 0 ? instructions : undefined,
-          ingredients,
+          ingredients: ingredients.map((ing) => ({
+            ...ing,
+            fiber_g:
+              ing.fiber_g && ing.fiber_g > 0
+                ? ing.fiber_g
+                : resolveIngredientFiber(ing, customFoods),
+          })),
         }),
       });
 
@@ -2382,7 +2423,10 @@ export default function DishManager() {
                               </div>
                               <span className="text-[11px] text-zinc-400 block mt-0.5">
                                 {ing.calories} kcal • P: {ing.protein_g}g • C: {ing.carbs_g}g • G: {ing.fat_g}g
-                                {ing.fiber_g ? ` • Fibra: ${ing.fiber_g}g` : ''}
+                                {(() => {
+                                  const fib = ing.fiber_g && ing.fiber_g > 0 ? ing.fiber_g : resolveIngredientFiber(ing, customFoods);
+                                  return fib > 0 ? ` • Fibra: ${fib}g` : '';
+                                })()}
                               </span>
                             </div>
 

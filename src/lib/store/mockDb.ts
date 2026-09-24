@@ -1,6 +1,7 @@
 import { Profile, Household, Goal, Food, MealPlanItem, FoodLog, HealthMetric, ShoppingListItem, PhotoComparison, Dish, DishIngredient, ConsumptionSchedule, WaterLog } from '@/types/database';
 import { hashPin } from '@/lib/auth/pin';
 import { WHOLE_FOODS } from '@/lib/data/wholeFoods';
+import { STARTER_RECIPES } from '@/lib/data/starterRecipes';
 
 export interface InMemoryDB {
   households: Household[];
@@ -179,6 +180,57 @@ export async function getDb(): Promise<InMemoryDB> {
           created_at: new Date().toISOString(),
         },
         {
+          id: 'food-quaker-platano-nuez',
+          user_id: null,
+          name: 'Avena Sin Azúcar Plátano Y Nuez',
+          brand: 'Quaker',
+          serving_size_g: 40,
+          serving_unit: 'g',
+          calories: 363, // 145 kcal por sobre (40g)
+          protein_g: 12.5, // 5.0g por sobre
+          carbs_g: 58.0, // 23.2g por sobre
+          fat_g: 9.0, // 3.6g por sobre
+          fiber_g: 8.0, // 3.2g por sobre
+          source: 'openfoodfacts',
+          barcode: '7500478039616',
+          is_verified: true,
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'food-quaker-arandano',
+          user_id: null,
+          name: 'Avena Integral Instant Sabor Sin Azúcar Arándano',
+          brand: 'Quaker',
+          serving_size_g: 40,
+          serving_unit: 'g',
+          calories: 323, // 129 kcal por sobre (40g)
+          protein_g: 12.0, // 4.8g por sobre
+          carbs_g: 56.5, // 22.6g por sobre
+          fat_g: 5.5, // 2.2g por sobre
+          fiber_g: 7.5, // 3.0g por sobre
+          source: 'openfoodfacts',
+          barcode: '7500478039630',
+          is_verified: true,
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'food-quaker-manzana-canela',
+          user_id: null,
+          name: 'Avena Integral Instant Sabor Sin Azúcar Manzana y Canela',
+          brand: 'Quaker',
+          serving_size_g: 40,
+          serving_unit: 'g',
+          calories: 325, // 130 kcal por sobre (40g)
+          protein_g: 12.0, // 4.8g por sobre
+          carbs_g: 57.5, // 23.0g por sobre
+          fat_g: 5.5, // 2.2g por sobre
+          fiber_g: 7.8, // 3.1g por sobre
+          source: 'openfoodfacts',
+          barcode: '7500478039623',
+          is_verified: true,
+          created_at: new Date().toISOString(),
+        },
+        {
           id: 'f-5',
           user_id: null,
           name: 'Yogurt Griego sin azúcar',
@@ -326,6 +378,154 @@ export async function getDb(): Promise<InMemoryDB> {
       consumption_schedules: [],
     };
   }
+
+  // Sincronizar y asegurar alimentos verificados de Avena Quaker en memoria
+  const quakerVerifiedItems: Food[] = [
+    {
+      id: 'food-quaker-platano-nuez',
+      user_id: null,
+      name: 'Avena Sin Azúcar Plátano Y Nuez',
+      brand: 'Quaker',
+      serving_size_g: 40,
+      serving_unit: 'g',
+      calories: 363, // 145 kcal por sobre (40g)
+      protein_g: 12.5, // 5.0g
+      carbs_g: 58.0, // 23.2g
+      fat_g: 9.0, // 3.6g
+      fiber_g: 8.0, // 3.2g
+      source: 'openfoodfacts',
+      barcode: '7500478039616',
+      is_verified: true,
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: 'food-quaker-arandano',
+      user_id: null,
+      name: 'Avena Integral Instant Sabor Sin Azúcar Arándano',
+      brand: 'Quaker',
+      serving_size_g: 40,
+      serving_unit: 'g',
+      calories: 323, // 129 kcal por sobre (40g)
+      protein_g: 12.0, // 4.8g
+      carbs_g: 56.5, // 22.6g
+      fat_g: 5.5, // 2.2g
+      fiber_g: 7.5, // 3.0g
+      source: 'openfoodfacts',
+      barcode: '7500478039630',
+      is_verified: true,
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: 'food-quaker-manzana-canela',
+      user_id: null,
+      name: 'Avena Integral Instant Sabor Sin Azúcar Manzana y Canela',
+      brand: 'Quaker',
+      serving_size_g: 40,
+      serving_unit: 'g',
+      calories: 325, // 130 kcal por sobre (40g)
+      protein_g: 12.0, // 4.8g
+      carbs_g: 57.5, // 23.0g
+      fat_g: 5.5, // 2.2g
+      fiber_g: 7.8, // 3.1g
+      source: 'openfoodfacts',
+      barcode: '7500478039623',
+      is_verified: true,
+      created_at: new Date().toISOString(),
+    },
+  ];
+
+  for (const qItem of quakerVerifiedItems) {
+    const existingIdx = globalForDb.duoCalDb.foods.findIndex(
+      (f) => f.barcode === qItem.barcode || f.id === qItem.id
+    );
+    if (existingIdx !== -1) {
+      globalForDb.duoCalDb.foods[existingIdx] = {
+        ...globalForDb.duoCalDb.foods[existingIdx],
+        ...qItem,
+      };
+    } else {
+      globalForDb.duoCalDb.foods.push(qItem);
+    }
+  }
+
+  // Corregir logs existentes de estas avenas en el diario si no tenían fibra registrada
+  for (const log of globalForDb.duoCalDb.food_logs) {
+    const nameLower = (log.food_name || '').toLowerCase();
+    if (nameLower.includes('avena')) {
+      if (
+        nameLower.includes('platano') ||
+        nameLower.includes('plátano') ||
+        log.food_id === 'food-quaker-platano-nuez' ||
+        log.food_id?.includes('7500478039616')
+      ) {
+        if (!log.fiber_g || log.fiber_g === 0) log.fiber_g = 3.2;
+        if (log.calories <= 75 && log.amount_g >= 35) {
+          log.calories = 145;
+          log.protein_g = 5.0;
+          log.carbs_g = 23.2;
+          log.fat_g = 3.6;
+        }
+      } else if (
+        nameLower.includes('arandano') ||
+        nameLower.includes('arándano') ||
+        log.food_id === 'food-quaker-arandano' ||
+        log.food_id?.includes('7500478039630')
+      ) {
+        if (!log.fiber_g || log.fiber_g === 0) log.fiber_g = 3.0;
+        if (log.calories <= 35 && log.amount_g >= 35) {
+          log.calories = 129;
+          log.protein_g = 4.8;
+          log.carbs_g = 22.6;
+          log.fat_g = 2.2;
+        }
+      } else if (
+        nameLower.includes('manzana') ||
+        log.food_id === 'food-quaker-manzana-canela' ||
+        log.food_id?.includes('7500478039623')
+      ) {
+        if (!log.fiber_g || log.fiber_g === 0) log.fiber_g = 3.1;
+        if (log.calories <= 35 && log.amount_g >= 35) {
+          log.calories = 130;
+          log.protein_g = 4.8;
+          log.carbs_g = 23.0;
+          log.fat_g = 2.2;
+        }
+      }
+    }
+  }
+
+  // Sincronizar platillos base (incluyendo los bowls de yogur griego con avena) en dishes y dish_ingredients
+  for (const starter of STARTER_RECIPES) {
+    const existingDishIdx = globalForDb.duoCalDb.dishes.findIndex(
+      (d) => d.id === starter.id || d.name.toLowerCase().trim() === starter.name.toLowerCase().trim()
+    );
+    if (existingDishIdx === -1) {
+      globalForDb.duoCalDb.dishes.push(starter);
+      if (starter.ingredients && Array.isArray(starter.ingredients)) {
+        for (const ing of starter.ingredients) {
+          if (!globalForDb.duoCalDb.dish_ingredients.some((di) => di.id === ing.id)) {
+            globalForDb.duoCalDb.dish_ingredients.push(ing);
+          }
+        }
+      }
+    } else {
+      globalForDb.duoCalDb.dishes[existingDishIdx] = {
+        ...globalForDb.duoCalDb.dishes[existingDishIdx],
+        ...starter,
+      };
+      if (starter.ingredients && Array.isArray(starter.ingredients)) {
+        for (const ing of starter.ingredients) {
+          const ingIdx = globalForDb.duoCalDb.dish_ingredients.findIndex((di) => di.id === ing.id);
+          if (ingIdx !== -1) {
+            globalForDb.duoCalDb.dish_ingredients[ingIdx] = ing;
+          } else {
+            globalForDb.duoCalDb.dish_ingredients.push(ing);
+          }
+        }
+      }
+    }
+  }
+
   return globalForDb.duoCalDb;
 }
 

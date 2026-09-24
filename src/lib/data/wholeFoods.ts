@@ -901,6 +901,60 @@ export const WHOLE_FOODS: WholeFoodDefinition[] = [
     category: 'carbohidratos',
   },
   {
+    id: 'food-quaker-platano-nuez',
+    user_id: null,
+    name: 'Avena Sin Azúcar Plátano Y Nuez',
+    brand: 'Quaker',
+    serving_size_g: 40,
+    serving_unit: 'g',
+    calories: 363, // 145 kcal por sobre (40g)
+    protein_g: 12.5, // 5.0g por sobre
+    carbs_g: 58.0, // 23.2g por sobre
+    fat_g: 9.0, // 3.6g por sobre
+    fiber_g: 8.0, // 3.2g por sobre
+    source: 'openfoodfacts',
+    barcode: '7500478039616',
+    is_verified: true,
+    created_at: new Date('2026-01-01').toISOString(),
+    category: 'carbohidratos',
+  },
+  {
+    id: 'food-quaker-arandano',
+    user_id: null,
+    name: 'Avena Integral Instant Sabor Sin Azúcar Arándano',
+    brand: 'Quaker',
+    serving_size_g: 40,
+    serving_unit: 'g',
+    calories: 323, // 129 kcal por sobre (40g)
+    protein_g: 12.0, // 4.8g por sobre
+    carbs_g: 56.5, // 22.6g por sobre
+    fat_g: 5.5, // 2.2g por sobre
+    fiber_g: 7.5, // 3.0g por sobre
+    source: 'openfoodfacts',
+    barcode: '7500478039630',
+    is_verified: true,
+    created_at: new Date('2026-01-01').toISOString(),
+    category: 'carbohidratos',
+  },
+  {
+    id: 'food-quaker-manzana-canela',
+    user_id: null,
+    name: 'Avena Integral Instant Sabor Sin Azúcar Manzana y Canela',
+    brand: 'Quaker',
+    serving_size_g: 40,
+    serving_unit: 'g',
+    calories: 325, // 130 kcal por sobre (40g)
+    protein_g: 12.0, // 4.8g por sobre
+    carbs_g: 57.5, // 23.0g por sobre
+    fat_g: 5.5, // 2.2g por sobre
+    fiber_g: 7.8, // 3.1g por sobre
+    source: 'openfoodfacts',
+    barcode: '7500478039623',
+    is_verified: true,
+    created_at: new Date('2026-01-01').toISOString(),
+    category: 'carbohidratos',
+  },
+  {
     id: '00000000-0000-4000-8000-000000000404',
     user_id: null,
     name: 'Papa cocida / hervida (con piel)',

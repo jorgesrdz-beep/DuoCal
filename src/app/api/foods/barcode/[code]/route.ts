@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/store/mockDb';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
+import { WHOLE_FOODS } from '@/lib/data/wholeFoods';
+import { resolveIngredientFiber } from '@/lib/utils/fiberUtils';
 
 export async function GET(
   req: Request,
@@ -18,7 +20,7 @@ export async function GET(
     const db = await getDb();
 
     // 1. Buscar primero en base de datos local
-    const localMatch = db.foods.find((f) => f.barcode === cleanCode);
+    const localMatch = db.foods.find((f) => f.barcode === cleanCode) || WHOLE_FOODS.find((f) => f.barcode === cleanCode);
     if (localMatch) {
       return NextResponse.json({
         source: 'local',
@@ -98,7 +100,10 @@ export async function GET(
     const protein100g = Number((nutriments['proteins_100g'] || nutriments['proteins'] || 0).toFixed(1));
     const carbs100g = Number((nutriments['carbohydrates_100g'] || nutriments['carbohydrates'] || 0).toFixed(1));
     const fat100g = Number((nutriments['fat_100g'] || nutriments['fat'] || 0).toFixed(1));
-    const fiber100g = Number((nutriments['fiber_100g'] || nutriments['fiber'] || 0).toFixed(1));
+    let fiber100g = Number((nutriments['fiber_100g'] || nutriments['fiber'] || 0).toFixed(1));
+    if (fiber100g <= 0) {
+      fiber100g = resolveIngredientFiber({ ingredient_name: name, amount_g: 100 });
+    }
     const sodium100g = Math.round((nutriments['sodium_100g'] || (nutriments['salt_100g'] ? nutriments['salt_100g'] * 400 : 0) || 0));
 
     // Imagen

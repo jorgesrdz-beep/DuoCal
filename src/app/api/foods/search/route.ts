@@ -4,6 +4,7 @@ import { cookies } from 'next/headers';
 import { Food } from '@/types/database';
 import { WHOLE_FOODS } from '@/lib/data/wholeFoods';
 import { calculateFuzzyScore } from '@/lib/utils/fuzzySearch';
+import { resolveIngredientFiber } from '@/lib/utils/fiberUtils';
 
 export async function GET(req: Request) {
   try {
@@ -119,6 +120,10 @@ export async function GET(req: Request) {
               const protein = Number(nutriments['proteins_100g'] || 0);
               const carbs = Number(nutriments['carbohydrates_100g'] || 0);
               const fat = Number(nutriments['fat_100g'] || 0);
+              let fiber = Number((nutriments['fiber_100g'] || nutriments['fiber'] || 0).toFixed(1));
+              if (fiber <= 0) {
+                fiber = resolveIngredientFiber({ ingredient_name: name, amount_g: 100 });
+              }
 
               if (calories > 0 || protein > 0 || carbs > 0 || fat > 0) {
                 // Evitar duplicados con los locales
@@ -134,6 +139,7 @@ export async function GET(req: Request) {
                     protein_g: Number(protein.toFixed(1)),
                     carbs_g: Number(carbs.toFixed(1)),
                     fat_g: Number(fat.toFixed(1)),
+                    fiber_g: fiber,
                     source: 'openfoodfacts',
                     barcode: item.code || null,
                     is_verified: false,
