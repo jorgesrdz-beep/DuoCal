@@ -778,7 +778,7 @@ export const STARTER_RECIPES: Dish[] = [
       {
         id: 'si-9-2',
         dish_id: 'starter-9',
-        food_id: 'food-quaker-platano-nuez',
+        food_id: null,
         ingredient_name: 'Avena de plátano y nuez Quaker (1 sobre)',
         amount_g: 40,
         calories: 145,
@@ -869,7 +869,7 @@ export const STARTER_RECIPES: Dish[] = [
       {
         id: 'si-10-2',
         dish_id: 'starter-10',
-        food_id: 'food-quaker-manzana-canela',
+        food_id: null,
         ingredient_name: 'Avena de manzana y canela Quaker (1 sobre)',
         amount_g: 40,
         calories: 130,
@@ -960,7 +960,7 @@ export const STARTER_RECIPES: Dish[] = [
       {
         id: 'si-11-2',
         dish_id: 'starter-11',
-        food_id: 'food-quaker-arandano',
+        food_id: null,
         ingredient_name: 'Avena de arándano Quaker (1 sobre)',
         amount_g: 40,
         calories: 129,

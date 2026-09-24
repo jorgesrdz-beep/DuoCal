@@ -593,6 +593,17 @@ function filterForSupabase(table: string, obj: any): any {
       filtered[key] = obj[key];
     }
   }
+
+  // Sanitizar campos UUID para evitar errores de sintaxis en Postgres/Supabase
+  if (table === 'dish_ingredients' || table === 'food_logs' || table === 'meal_plans') {
+    if (
+      filtered.food_id &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(filtered.food_id))
+    ) {
+      filtered.food_id = null;
+    }
+  }
+
   return filtered;
 }
 

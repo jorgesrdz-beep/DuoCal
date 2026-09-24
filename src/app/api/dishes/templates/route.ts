@@ -49,10 +49,11 @@ export async function POST(req: Request) {
         );
         sumIngFiber += resolvedFiber;
 
+        const isValidUuid = typeof ing.food_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ing.food_id);
         const scaledIng = {
           id: crypto.randomUUID(),
           dish_id: newDishId,
-          food_id: ing.food_id || null,
+          food_id: isValidUuid ? ing.food_id : null,
           ingredient_name: ing.ingredient_name,
           amount_g: scaledWeight,
           calories: Math.round(ing.calories * ratio),
