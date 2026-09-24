@@ -304,16 +304,54 @@ export default function DailyDiary() {
     }
   };
 
-  const handleLogAllPlanned = async () => {
-    const isItemLogged = (item: any) => {
-      const baseName = (item.custom_name || '').replace(/\s*\(.*$/, '').trim().toLowerCase();
-      return logs.some(
-        (l) =>
-          l.meal_type === item.meal_type &&
-          (l.food_name.toLowerCase().includes(baseName) || baseName.includes(l.food_name.toLowerCase().trim()))
+  // Determina qué comidas planeadas del día quedan pendientes por consumir/registrar.
+  // Permite detección inteligente entre tiempos de comida (cross-meal): si planeaste un platillo para la cena
+  // pero lo consumiste/registraste en la comida (almuerzo) o viceversa, detecta que ya se consumió
+  // y no te lo vuelve a sugerir repetido en otro horario del mismo día.
+  const getUnloggedPlannedMeals = (plannedList: any[], dailyLogs: any[]) => {
+    const availableLogs = [...dailyLogs];
+
+    const matchesPlan = (plan: any, log: any) => {
+      const planBase = (plan.custom_name || '').replace(/\s*\(.*$/, '').trim().toLowerCase();
+      const logBase = (log.food_name || '').replace(/\s*\(.*$/, '').trim().toLowerCase();
+      if (!planBase || !logBase) return false;
+      return (
+        logBase === planBase ||
+        logBase.includes(planBase) ||
+        planBase.includes(logBase) ||
+        (plan.food_id && log.food_id && plan.food_id === log.food_id)
       );
     };
-    const unlogged = plannedMealsForDay.filter((p) => !isItemLogged(p));
+
+    // 1. Prioridad: emparejar con el mismo meal_type (ej. comida planeada registrada en comida)
+    const pendingAfterExact: any[] = [];
+    for (const plan of plannedList) {
+      const exactIndex = availableLogs.findIndex(
+        (log) => log.meal_type === plan.meal_type && matchesPlan(plan, log)
+      );
+      if (exactIndex !== -1) {
+        availableLogs.splice(exactIndex, 1);
+      } else {
+        pendingAfterExact.push(plan);
+      }
+    }
+
+    // 2. Emparejamiento flexible / cruzado: si no está en su horario planeado pero sí fue consumido hoy en otro horario
+    const finalPending: any[] = [];
+    for (const plan of pendingAfterExact) {
+      const crossIndex = availableLogs.findIndex((log) => matchesPlan(plan, log));
+      if (crossIndex !== -1) {
+        availableLogs.splice(crossIndex, 1);
+      } else {
+        finalPending.push(plan);
+      }
+    }
+
+    return finalPending;
+  };
+
+  const handleLogAllPlanned = async () => {
+    const unlogged = getUnloggedPlannedMeals(plannedMealsForDay, logs);
     if (unlogged.length === 0) return;
 
     setIsLoggingAllPlanned(true);
@@ -728,6 +766,8 @@ export default function DailyDiary() {
   const targetFiber = activeGoal?.fiber_target_g || 30;
   const targetWater = activeGoal?.water_target_ml || 2500;
 
+  const allUnloggedPlanned = getUnloggedPlannedMeals(plannedMealsForDay, logs);
+
   return (
     <div className="space-y-5 pb-16">
       {/* 1. Selector de fecha */}
@@ -995,16 +1035,7 @@ export default function DailyDiary() {
 
       {/* Banner de Comidas Planeadas del Plan Semanal para este día */}
       {(() => {
-        const isItemLogged = (item: any) => {
-          const baseName = (item.custom_name || '').replace(/\s*\(.*$/, '').trim().toLowerCase();
-          return logs.some(
-            (l) =>
-              l.meal_type === item.meal_type &&
-              (l.food_name.toLowerCase().includes(baseName) || baseName.includes(l.food_name.toLowerCase().trim()))
-          );
-        };
-        const unloggedPlanned = plannedMealsForDay.filter((p) => !isItemLogged(p));
-        if (unloggedPlanned.length === 0) return null;
+        if (allUnloggedPlanned.length === 0) return null;
 
         return (
           <div className="bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/10 dark:from-emerald-950/40 dark:to-teal-950/20 border border-emerald-500/30 rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
@@ -1014,10 +1045,10 @@ export default function DailyDiary() {
               </div>
               <div>
                 <p className="text-xs font-bold text-zinc-900 dark:text-white">
-                  Tienes {unloggedPlanned.length} comida{unloggedPlanned.length === 1 ? '' : 's'} planeada{unloggedPlanned.length === 1 ? '' : 's'} para hoy
+                  Tienes {allUnloggedPlanned.length} comida{allUnloggedPlanned.length === 1 ? '' : 's'} planeada{allUnloggedPlanned.length === 1 ? '' : 's'} para hoy
                 </p>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  {unloggedPlanned.map((p) => p.custom_name.replace(/\s*\(.*$/, '')).join(', ')}
+                  {allUnloggedPlanned.map((p) => p.custom_name.replace(/\s*\(.*$/, '')).join(', ')}
                 </p>
               </div>
             </div>
@@ -1038,11 +1069,7 @@ export default function DailyDiary() {
         {meals.map((meal) => {
           const mealLogs = logs.filter((l) => l.meal_type === meal.type);
           const mealCals = mealLogs.reduce((sum, item) => sum + item.calories, 0);
-          const plannedForThisMeal = plannedMealsForDay.filter((p) => p.meal_type === meal.type);
-          const unloggedPlanned = plannedForThisMeal.filter((planned) => {
-            const baseName = planned.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
-            return !mealLogs.some((l) => l.food_name.toLowerCase().includes(baseName));
-          });
+          const unloggedPlanned = allUnloggedPlanned.filter((p) => p.meal_type === meal.type);
 
           return (
             <div

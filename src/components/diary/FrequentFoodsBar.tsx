@@ -95,9 +95,11 @@ export default function FrequentFoodsBar({
 
   const isAlreadyLogged = (item: any) => {
     const cleanName = item.custom_name.replace(/\s*\(.*$/, '').trim().toLowerCase();
-    return currentLogs.some(
-      (l) => l.meal_type === item.meal_type && l.food_name.toLowerCase().includes(cleanName)
-    );
+    return currentLogs.some((l) => {
+      const logName = l.food_name.toLowerCase();
+      const matches = logName.includes(cleanName) || cleanName.includes(logName.replace(/\s*\(.*$/, '').trim());
+      return matches;
+    });
   };
 
   const handleQuickLog = async (item: any) => {
