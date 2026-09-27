@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { STARTER_RECIPES } from '@/lib/data/starterRecipes';
 import { getDb, insertRow } from '@/lib/store/mockDb';
 import { resolveIngredientFiber } from '@/lib/utils/fiberUtils';
+import { WHOLE_FOODS } from '@/lib/data/wholeFoods';
+import { isServiceRoleConfigured, supabaseAdmin } from '@/lib/supabase/admin';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
 
@@ -32,6 +34,45 @@ export async function POST(req: Request) {
 
     const newDishId = crypto.randomUUID();
 
+    // Validar y sincronizar food_ids con Supabase si está activo
+    const supabase = isServiceRoleConfigured ? supabaseAdmin : null;
+    const validFoodIds = new Set<string>();
+
+    if (supabase && template.ingredients && template.ingredients.length > 0) {
+      const candidateIds = template.ingredients
+        .map((i: any) => i.food_id)
+        .filter((id: any) => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+
+      if (candidateIds.length > 0) {
+        try {
+          const { data: foundFoods } = await supabase
+            .from('foods')
+            .select('id')
+            .in('id', candidateIds);
+
+          if (foundFoods) {
+            foundFoods.forEach((f: any) => validFoodIds.add(f.id));
+          }
+
+          // Si algún alimento no existe en Supabase pero está en nuestro catálogo local/WHOLE_FOODS, registrarlo
+          const missingIds = candidateIds.filter((id: string) => !validFoodIds.has(id));
+          for (const mId of missingIds) {
+            const foodCandidate = db.foods.find((f) => f.id === mId) || WHOLE_FOODS.find((f) => f.id === mId);
+            if (foodCandidate) {
+              try {
+                await insertRow('foods', foodCandidate);
+                validFoodIds.add(mId);
+              } catch {
+                // Si falla el registro previo en foods, el ingrediente usará food_id: null
+              }
+            }
+          }
+        } catch {
+          // Fallback silencioso
+        }
+      }
+    }
+
     // Clonar ingredientes escalados a las porciones deseadas
     const clonedIngredients = [];
     let sumIngFiber = 0;
@@ -50,10 +91,12 @@ export async function POST(req: Request) {
         sumIngFiber += resolvedFiber;
 
         const isValidUuid = typeof ing.food_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ing.food_id);
+        const safeFoodId = isValidUuid && typeof ing.food_id === 'string' && (!supabase || validFoodIds.has(ing.food_id)) ? ing.food_id : null;
+
         const scaledIng = {
           id: crypto.randomUUID(),
           dish_id: newDishId,
-          food_id: isValidUuid ? ing.food_id : null,
+          food_id: safeFoodId,
           ingredient_name: ing.ingredient_name,
           amount_g: scaledWeight,
           calories: Math.round(ing.calories * ratio),

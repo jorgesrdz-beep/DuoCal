@@ -66,6 +66,42 @@ export async function PUT(
 
     const servings = Math.max(0.5, Number(total_servings) || 1);
 
+    // Validar food_id contra base de datos si Supabase está activo
+    const supabase = isServiceRoleConfigured ? supabaseAdmin : null;
+    const validFoodIds = new Set<string>();
+    if (supabase && ingredients.length > 0) {
+      const candidateIds = ingredients
+        .map((i: any) => i.food_id)
+        .filter((id: any) => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+
+      if (candidateIds.length > 0) {
+        try {
+          const { data: foundFoods } = await supabase
+            .from('foods')
+            .select('id')
+            .in('id', candidateIds);
+          if (foundFoods) {
+            foundFoods.forEach((f: any) => validFoodIds.add(f.id));
+          }
+
+          const missingIds = candidateIds.filter((id: string) => !validFoodIds.has(id));
+          for (const mId of missingIds) {
+            const foodCandidate = db.foods.find((f) => f.id === mId) || WHOLE_FOODS.find((f) => f.id === mId);
+            if (foodCandidate) {
+              try {
+                await insertRow('foods', foodCandidate);
+                validFoodIds.add(mId);
+              } catch {
+                // Ignore
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     let totalCals = 0;
     let totalProt = 0;
     let totalCarbs = 0;
@@ -90,10 +126,15 @@ export async function PUT(
       totalFiber += fiber;
       totalWeight += weight;
 
+      const safeFoodId =
+        ing.food_id && typeof ing.food_id === 'string' && (!supabase || validFoodIds.has(ing.food_id))
+          ? ing.food_id
+          : null;
+
       processedIngredients.push({
         id: crypto.randomUUID(),
         dish_id: id,
-        food_id: ing.food_id || null,
+        food_id: safeFoodId,
         ingredient_name: (ing.ingredient_name || '').trim(),
         amount_g: weight,
         calories: cals,

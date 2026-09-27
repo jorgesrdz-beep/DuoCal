@@ -783,6 +783,18 @@ export async function insertRow(table: string, row: any): Promise<void> {
     const payload = filterForSupabase(table, row);
     const { error } = await supabaseAdmin.from(table).upsert(payload);
     if (error) {
+      if (
+        table === 'dish_ingredients' &&
+        (error.message?.includes('dish_ingredients_food_id_fkey') || (error as any).code === '23503')
+      ) {
+        // Fallback resiliente: si el alimento aún no existe en Supabase, persistir ingrediente con food_id = null
+        const retryPayload = { ...payload, food_id: null };
+        const { error: retryErr } = await supabaseAdmin.from(table).upsert(retryPayload);
+        if (!retryErr) {
+          row.food_id = null;
+          return;
+        }
+      }
       console.error(`Error upserting into Supabase ${table}:`, error);
       throw new Error(`Error al persistir en Supabase (${table}): ${error.message}`);
     }
