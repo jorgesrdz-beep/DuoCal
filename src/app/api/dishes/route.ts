@@ -17,7 +17,7 @@ export async function GET() {
 
     // Obtener platillos propios o compartidos en el household
     const userDishes = db.dishes.filter((d) => {
-      const isOwner = d.user_id === userId;
+      const isOwner = d.user_id === userId || !d.user_id;
       const isPartnerShared =
         d.is_shared_with_partner &&
         user?.household_id &&

@@ -302,6 +302,40 @@ export async function getDb(): Promise<InMemoryDB> {
           fiber_per_serving: 5,
           created_at: new Date().toISOString(),
         },
+        {
+          id: 'd0000000-0000-0000-0000-000000000003',
+          user_id: null,
+          household_id: null,
+          name: 'Sándwich de Pavo y Panela',
+          description: 'Sándwich alto en proteína en pan Cero Cero multigrano con pechuga de pavo San Rafael Balance, queso panela Los Volcanes reducido en grasa, aguacate y verduras frescas.',
+          category: 'lunch',
+          total_servings: 1,
+          total_weight_g: 315,
+          serving_name: 'sándwich completo (315g)',
+          is_shared_with_partner: true,
+          is_starter_template: false,
+          prep_time_minutes: 5,
+          cook_time_minutes: 2,
+          instructions: [
+            'Untar la mostaza en una de las rebanadas de Pan Bimbo Cero Cero Multigrano (opcional: dorar ligeramente el pan en comal o tostadora).',
+            'Colocar la cama de lechuga fresca limpia y seca.',
+            'Distribuir las rebanadas de Pechuga de Pavo San Rafael Balance (90g).',
+            'Colocar el Queso Panela Los Volcanes reducido en grasa en rebanadas (45g).',
+            'Agregar las rodajas de jitomate (40g) y el aguacate (25g). Sazonar con unas gotas de limón, pimienta molida o chile al gusto.',
+            'Cerrar con la segunda rebanada de pan, cortar en diagonal y disfrutar.'
+          ],
+          total_calories: 434,
+          total_protein_g: 38.5,
+          total_carbs_g: 40.7,
+          total_fat_g: 11.8,
+          total_fiber_g: 6.7,
+          calories_per_serving: 434,
+          protein_per_serving: 38.5,
+          carbs_per_serving: 40.7,
+          fat_per_serving: 11.8,
+          fiber_per_serving: 6.7,
+          created_at: new Date().toISOString(),
+        },
       ],
       dish_ingredients: [
         {
@@ -374,6 +408,111 @@ export async function getDb(): Promise<InMemoryDB> {
           sodium_mg: 100,
           created_at: new Date().toISOString(),
         },
+        {
+          id: 'da000000-0000-0000-0000-000000000006',
+          dish_id: 'd0000000-0000-0000-0000-000000000003',
+          food_id: '00000000-0000-4000-8000-000000000418',
+          ingredient_name: 'Pan Cero Cero Multigrano (Bimbo)',
+          amount_g: 85,
+          calories: 196,
+          protein_g: 13.7,
+          carbs_g: 31.7,
+          fat_g: 1.5,
+          fiber_g: 4.1,
+          sodium_mg: 395,
+          aisle_category: 'Abarrotes y Granos',
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'da000000-0000-0000-0000-000000000007',
+          dish_id: 'd0000000-0000-0000-0000-000000000003',
+          food_id: '00000000-0000-4000-8000-000000000324',
+          ingredient_name: 'Pechuga de Pavo Receta Tradicional (San Rafael Balance)',
+          amount_g: 90,
+          calories: 92,
+          protein_g: 14.6,
+          carbs_g: 2.4,
+          fat_g: 0.8,
+          fiber_g: 0,
+          sodium_mg: 450,
+          aisle_category: 'Carnicería y Proteínas',
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'da000000-0000-0000-0000-000000000008',
+          dish_id: 'd0000000-0000-0000-0000-000000000003',
+          food_id: '00000000-0000-4000-8000-000000000325',
+          ingredient_name: 'Queso Panela Reducido en Grasa (Los Volcanes)',
+          amount_g: 45,
+          calories: 90,
+          protein_g: 8.6,
+          carbs_g: 1.8,
+          fat_g: 5.4,
+          fiber_g: 0,
+          sodium_mg: 234,
+          aisle_category: 'Lácteos y Refrigerados',
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'da000000-0000-0000-0000-000000000009',
+          dish_id: 'd0000000-0000-0000-0000-000000000003',
+          food_id: null,
+          ingredient_name: 'Aguacate Hass',
+          amount_g: 25,
+          calories: 40,
+          protein_g: 0.5,
+          carbs_g: 2.1,
+          fat_g: 3.7,
+          fiber_g: 1.7,
+          sodium_mg: 2,
+          aisle_category: 'Frutas y Verduras',
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'da000000-0000-0000-0000-000000000010',
+          dish_id: 'd0000000-0000-0000-0000-000000000003',
+          food_id: null,
+          ingredient_name: 'Jitomate fresco en rodajas',
+          amount_g: 40,
+          calories: 7,
+          protein_g: 0.4,
+          carbs_g: 1.6,
+          fat_g: 0.1,
+          fiber_g: 0.5,
+          sodium_mg: 2,
+          aisle_category: 'Frutas y Verduras',
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'da000000-0000-0000-0000-000000000011',
+          dish_id: 'd0000000-0000-0000-0000-000000000003',
+          food_id: null,
+          ingredient_name: 'Lechuga romana / orejona fresca',
+          amount_g: 20,
+          calories: 3,
+          protein_g: 0.3,
+          carbs_g: 0.6,
+          fat_g: 0,
+          fiber_g: 0.4,
+          sodium_mg: 5,
+          aisle_category: 'Frutas y Verduras',
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'da000000-0000-0000-0000-000000000012',
+          dish_id: 'd0000000-0000-0000-0000-000000000003',
+          food_id: null,
+          ingredient_name: 'Mostaza Dijon o regular y limón al gusto',
+          amount_g: 10,
+          calories: 6,
+          protein_g: 0.4,
+          carbs_g: 0.5,
+          fat_g: 0.3,
+          fiber_g: 0,
+          sodium_mg: 110,
+          aisle_category: 'Condimentos y Aceites',
+          created_at: new Date().toISOString(),
+        },
       ],
       consumption_schedules: [],
     };
@@ -434,22 +573,24 @@ export async function getDb(): Promise<InMemoryDB> {
     },
   ];
 
+  const memDb = globalForDb.duoCalDb!;
+
   for (const qItem of quakerVerifiedItems) {
-    const existingIdx = globalForDb.duoCalDb.foods.findIndex(
+    const existingIdx = memDb.foods.findIndex(
       (f) => f.barcode === qItem.barcode || f.id === qItem.id
     );
     if (existingIdx !== -1) {
-      globalForDb.duoCalDb.foods[existingIdx] = {
-        ...globalForDb.duoCalDb.foods[existingIdx],
+      memDb.foods[existingIdx] = {
+        ...memDb.foods[existingIdx],
         ...qItem,
       };
     } else {
-      globalForDb.duoCalDb.foods.push(qItem);
+      memDb.foods.push(qItem);
     }
   }
 
   // Corregir logs existentes de estas avenas en el diario si no tenían fibra registrada
-  for (const log of globalForDb.duoCalDb.food_logs) {
+  for (const log of memDb.food_logs) {
     const nameLower = (log.food_name || '').toLowerCase();
     if (nameLower.includes('avena')) {
       if (
@@ -496,37 +637,37 @@ export async function getDb(): Promise<InMemoryDB> {
 
   // Sincronizar platillos base (incluyendo los bowls de yogur griego con avena) en dishes y dish_ingredients
   for (const starter of STARTER_RECIPES) {
-    const existingDishIdx = globalForDb.duoCalDb.dishes.findIndex(
+    const existingDishIdx = memDb.dishes.findIndex(
       (d) => d.id === starter.id || d.name.toLowerCase().trim() === starter.name.toLowerCase().trim()
     );
     if (existingDishIdx === -1) {
-      globalForDb.duoCalDb.dishes.push(starter);
+      memDb.dishes.push(starter);
       if (starter.ingredients && Array.isArray(starter.ingredients)) {
         for (const ing of starter.ingredients) {
-          if (!globalForDb.duoCalDb.dish_ingredients.some((di) => di.id === ing.id)) {
-            globalForDb.duoCalDb.dish_ingredients.push(ing);
+          if (!memDb.dish_ingredients.some((di) => di.id === ing.id)) {
+            memDb.dish_ingredients.push(ing);
           }
         }
       }
     } else {
-      globalForDb.duoCalDb.dishes[existingDishIdx] = {
-        ...globalForDb.duoCalDb.dishes[existingDishIdx],
+      memDb.dishes[existingDishIdx] = {
+        ...memDb.dishes[existingDishIdx],
         ...starter,
       };
       if (starter.ingredients && Array.isArray(starter.ingredients)) {
         for (const ing of starter.ingredients) {
-          const ingIdx = globalForDb.duoCalDb.dish_ingredients.findIndex((di) => di.id === ing.id);
+          const ingIdx = memDb.dish_ingredients.findIndex((di) => di.id === ing.id);
           if (ingIdx !== -1) {
-            globalForDb.duoCalDb.dish_ingredients[ingIdx] = ing;
+            memDb.dish_ingredients[ingIdx] = ing;
           } else {
-            globalForDb.duoCalDb.dish_ingredients.push(ing);
+            memDb.dish_ingredients.push(ing);
           }
         }
       }
     }
   }
 
-  return globalForDb.duoCalDb;
+  return memDb;
 }
 
 export function generateUUID(): string {

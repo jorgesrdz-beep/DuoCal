@@ -67,22 +67,41 @@ Responde ÚNICAMENTE con un JSON válido con esta estructura, sin markdown ni co
       }
     }
 
-    // Fallback inteligente si no hay clave de Gemini
+    // Fallback inteligente parseando líneas si no hay clave de Gemini
+    const { parseSmartIngredient, translateRecipeTitle, translateRecipeInstructions } = await import('@/lib/utils/recipeTranslator');
+    const lines = recipeText.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+    const parsedIngredients = [];
+    const parsedInstructions = [];
+    let detectedTitle = '';
+
+    for (const line of lines) {
+      if (!detectedTitle && !/^\d|^[-*•]|ingrediente|preparaci|paso/i.test(line) && line.length < 50) {
+        detectedTitle = line;
+        continue;
+      }
+      if (/^\d+[\.\)]\s+|paso\s*\d+/i.test(line) || /cocinar|hervir|mezclar|hornear|calentar|servir|sofreír|picar/i.test(line)) {
+        parsedInstructions.push(line);
+      } else {
+        const ing = parseSmartIngredient(line.replace(/^[-*•]\s*/, ''));
+        if (ing.ingredient_name && ing.ingredient_name.length > 2) {
+          parsedIngredients.push(ing);
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: {
-        name: 'Platillo Importado',
+        name: translateRecipeTitle(detectedTitle || 'Platillo Importado'),
         description: 'Receta importada desde texto.',
         category: 'lunch',
         total_servings: 1,
-        prep_time_minutes: 10,
-        cook_time_minutes: 15,
-        instructions: [
-          '1. Preparar y pesar los ingredientes.',
-          '2. Cocinar a fuego medio en un sartén con aceite en aerosol.',
-          '3. Servir caliente y sazonar al gusto.',
-        ],
-        ingredients: [
+        prep_time_minutes: 15,
+        cook_time_minutes: 25,
+        instructions: parsedInstructions.length > 0
+          ? translateRecipeInstructions(parsedInstructions)
+          : ['1. Preparar y pesar los ingredientes.', '2. Cocinar a fuego medio y servir caliente.'],
+        ingredients: parsedIngredients.length > 0 ? parsedIngredients : [
           {
             ingredient_name: 'Pechuga de pollo o proteína principal',
             amount_g: 150,
@@ -92,28 +111,9 @@ Responde ÚNICAMENTE con un JSON válido con esta estructura, sin markdown ni co
             fat_g: 5,
             aisle_category: 'Carnicería y Proteínas',
           },
-          {
-            ingredient_name: 'Guarnición (arroz o papa)',
-            amount_g: 120,
-            calories: 150,
-            protein_g: 3,
-            carbs_g: 32,
-            fat_g: 0.5,
-            aisle_category: 'Abarrotes y Granos',
-          },
-          {
-            ingredient_name: 'Verduras salteadas',
-            amount_g: 100,
-            calories: 30,
-            protein_g: 1.5,
-            carbs_g: 5,
-            fat_g: 0.3,
-            aisle_category: 'Frutas y Verduras',
-          },
         ],
       },
-      source: 'fallback_template',
-      message: 'Plantilla generada a partir del texto. Puedes editar los ingredientes y gramos a tu gusto.',
+      source: 'smart_text_parser',
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Error al parsear receta';

@@ -16,6 +16,7 @@ import {
   Scale,
   Sparkles,
   Pencil,
+  ChefHat,
 } from 'lucide-react';
 
 interface RecipeDetailModalProps {
@@ -24,6 +25,7 @@ interface RecipeDetailModalProps {
   onSchedule?: (dish: Dish) => void;
   onLogToday?: (dish: Dish, servings: number) => void;
   onCloneTemplate?: (dish: Dish, customServings?: number) => void;
+  onCookTemplate?: (dish: Dish, customServings?: number) => void;
   onEdit?: (dish: Dish) => void;
 }
 
@@ -82,6 +84,7 @@ export default function RecipeDetailModal({
   onSchedule,
   onLogToday,
   onCloneTemplate,
+  onCookTemplate,
   onEdit,
 }: RecipeDetailModalProps) {
   const { user, partner, activeGoal, partnerGoal } = useAuth();
@@ -246,10 +249,18 @@ export default function RecipeDetailModal({
                 <div>
                   <span className="text-xs font-bold text-zinc-900 dark:text-white flex items-center gap-1.5">
                     <Users className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>{partner ? 'Porciones a Cocinar (Dúo)' : 'Porciones a Cocinar (Individual / Meal Prep)'}</span>
+                    <span>
+                      {dish.is_starter_template
+                        ? `Porciones de la Receta (${servings})`
+                        : partner
+                        ? 'Porciones a Cocinar (Dúo)'
+                        : 'Porciones a Cocinar / Meal Prep'}
+                    </span>
                   </span>
                   <span className="text-[11px] text-zinc-400">
-                    Multiplica los ingredientes automáticamente según las porciones que vayas a cocinar
+                    {dish.is_starter_template
+                      ? 'Multiplica los ingredientes para calcular las cantidades según las porciones deseadas'
+                      : 'Multiplica los ingredientes automáticamente según las porciones que vayas a cocinar'}
                   </span>
                 </div>
 
@@ -588,14 +599,31 @@ export default function RecipeDetailModal({
 
         {/* BOTONES DE ACCIÓN INFERIORES */}
         <div className="p-4 bg-zinc-50 dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 flex gap-2">
-          {dish.is_starter_template && onCloneTemplate ? (
-            <button
-              onClick={() => onCloneTemplate(dish, servings)}
-              className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20"
-            >
-              <Copy className="w-4 h-4" />
-              <span>Clonar a Mis Platillos ({servings} {servings > 1 ? 'porciones' : 'porción'})</span>
-            </button>
+          {dish.is_starter_template ? (
+            <div className="flex items-center gap-2 w-full">
+              {onCloneTemplate && (
+                <button
+                  type="button"
+                  onClick={() => onCloneTemplate(dish, servings)}
+                  className="flex-1 py-2.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  title="Guardar en Mis Platillos para personalizarla después"
+                >
+                  <Copy className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Guardar en Mis Platillos (Clonar)</span>
+                </button>
+              )}
+              {onCookTemplate && (
+                <button
+                  type="button"
+                  onClick={() => onCookTemplate(dish, servings)}
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
+                  title="Cocinar y preparar esta receta ahora"
+                >
+                  <ChefHat className="w-4 h-4" />
+                  <span>Cocinar ahora</span>
+                </button>
+              )}
+            </div>
           ) : (
             <>
               {!dish.is_starter_template && onEdit && (

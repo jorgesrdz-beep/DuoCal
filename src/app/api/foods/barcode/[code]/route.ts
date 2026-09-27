@@ -20,7 +20,34 @@ export async function GET(
     const db = await getDb();
 
     // 1. Buscar primero en base de datos local
-    const localMatch = db.foods.find((f) => f.barcode === cleanCode) || WHOLE_FOODS.find((f) => f.barcode === cleanCode);
+    const candidateCodes = [cleanCode];
+    if (cleanCode.length === 12 && /^\d+$/.test(cleanCode)) {
+      let sum = 0;
+      for (let i = 0; i < 12; i++) {
+        const digit = parseInt(cleanCode[i], 10);
+        sum += i % 2 === 0 ? digit : digit * 3;
+      }
+      const rem = sum % 10;
+      const check = rem === 0 ? 0 : 10 - rem;
+      candidateCodes.push(cleanCode + check);
+    } else if (cleanCode.length === 13 && /^\d+$/.test(cleanCode)) {
+      const prefix = cleanCode.slice(0, 12);
+      let sum = 0;
+      for (let i = 0; i < 12; i++) {
+        const digit = parseInt(prefix[i], 10);
+        sum += i % 2 === 0 ? digit : digit * 3;
+      }
+      const rem = sum % 10;
+      const check = rem === 0 ? 0 : 10 - rem;
+      const correctedCode = prefix + check;
+      if (correctedCode !== cleanCode) {
+        candidateCodes.push(correctedCode);
+      }
+    }
+
+    const localMatch = db.foods.find((f) => candidateCodes.includes(f.barcode || '')) ||
+      WHOLE_FOODS.find((f) => candidateCodes.includes(f.barcode || ''));
+
     if (localMatch) {
       return NextResponse.json({
         source: 'local',
@@ -40,37 +67,45 @@ export async function GET(
       });
     }
 
-    // 2. Consultar a Open Food Facts API (versión mundial con nombres en español)
-    const offUrl = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(cleanCode)}.json`;
+    // 2. Consultar a Open Food Facts API (probando candidateCodes)
+    let p: any = null;
+    let foundCode = cleanCode;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4500);
+    for (const codeToTry of candidateCodes) {
+      const offUrl = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(codeToTry)}.json`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4500);
 
-    const offRes = await fetch(offUrl, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'DuoCalApp - NextJS - Version 1.0 (contacto: duocal@example.com)',
-        'Accept': 'application/json',
-      },
-    });
-    clearTimeout(timeoutId);
+      try {
+        const offRes = await fetch(offUrl, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'DuoCalApp - NextJS - Version 1.0 (contacto: duocal@example.com)',
+            'Accept': 'application/json',
+          },
+        });
+        clearTimeout(timeoutId);
 
-    if (!offRes.ok) {
-      return NextResponse.json(
-        { error: 'Producto no encontrado en la base de Open Food Facts', barcode: cleanCode },
-        { status: 404 }
-      );
+        if (offRes.ok) {
+          const data = await offRes.json();
+          if (data && data.status === 1 && data.product) {
+            p = data.product;
+            foundCode = codeToTry;
+            break;
+          }
+        }
+      } catch {
+        clearTimeout(timeoutId);
+      }
     }
 
-    const data = await offRes.json();
-    if (!data || data.status === 0 || !data.product) {
+    if (!p) {
       return NextResponse.json(
         { error: 'Producto no registrado en Open Food Facts', barcode: cleanCode },
         { status: 404 }
       );
     }
 
-    const p = data.product;
     const nutriments = p.nutriments || {};
 
     // Nombre y marca
@@ -113,7 +148,7 @@ export async function GET(
       id: 'off-' + crypto.randomUUID().slice(0, 8),
       name,
       brand,
-      barcode: cleanCode,
+      barcode: foundCode,
       serving_size_g: servingGrams,
       calories: calories100g,
       protein_g: protein100g,

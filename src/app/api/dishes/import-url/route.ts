@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import {
+  parseSmartIngredient,
+  translateRecipeTitle,
+  translateRecipeInstructions,
+  translateCulinaryText,
+} from '@/lib/utils/recipeTranslator';
 
 // Helper para parsear duraciones ISO 8601 (ej. PT20M, PT1H30M)
 function parseISODuration(durationStr?: string): number {
@@ -11,117 +17,9 @@ function parseISODuration(durationStr?: string): number {
   return hours * 60 + minutes;
 }
 
-// Helper para clasificar pasillo según nombre del ingrediente
-function detectAisle(name: string): 'Carnicería y Proteínas' | 'Frutas y Verduras' | 'Abarrotes y Granos' | 'Lácteos y Refrigerados' | 'Condimentos y Aceites' | 'Otros' {
-  const n = name.toLowerCase();
-  if (/pollo|carne|res|pavo|pescado|atun|atún|salmon|salmón|cerdo|huevo|clara|tofu|camarones|lomo|bife|molida/.test(n)) {
-    return 'Carnicería y Proteínas';
-  }
-  if (/espinaca|lechuga|tomate|jitomate|cebolla|ajo|calabacita|zanahoria|brocoli|brócoli|aguacate|limon|limón|manzana|platano|plátano|fresa|moras|champinones|champiñones|pimiento|papa|papas|perejil|chile|chiles/.test(n)) {
-    return 'Frutas y Verduras';
-  }
-  if (/arroz|avena|pasta|pan|tortilla|quinoa|lentejas|frijol|garbanzo|harina|cereal|chia|chía/.test(n)) {
-    return 'Abarrotes y Granos';
-  }
-  if (/leche|yogur|yogurt|queso|mantequilla|crema|requeson|requesón|cottage/.test(n)) {
-    return 'Lácteos y Refrigerados';
-  }
-  if (/aceite|sal|pimienta|canela|vainilla|oregano|orégano|mejorana|vinagre|salsa|comino|mostaza|miel|soya|manteca|azucar|azúcar/.test(n)) {
-    return 'Condimentos y Aceites';
-  }
-  return 'Otros';
-}
-
-// Helper para estimar gramos y macronutrientes desde texto de ingrediente
+// Wrapper para parsear ingrediente con soporte bilingüe de unidades y traducción automática
 function parseIngredientString(raw: string) {
-  const clean = raw.trim().replace(/\s+/g, ' ');
-  let amount_g = 100;
-
-  // 1. Detectar gramos directamente (ej: "250g de pechuga", "200 g arroz") o kilos
-  const gMatch = clean.match(/(\d+(?:[.,]\d+)?)\s*(?:g|gr|gramos)/i);
-  const kgMatch = clean.match(/(\d+(?:[.,]\d+)?)\s*(?:kg|kilo|kilos)/i);
-
-  if (gMatch) {
-    amount_g = Math.round(parseFloat(gMatch[1].replace(',', '.')));
-  } else if (kgMatch) {
-    amount_g = Math.round(parseFloat(kgMatch[1].replace(',', '.')) * 1000);
-  } else if (/(\d+(?:\/\d+)?|½|¼|¾)\s*(?:taza|tazas|cup|cups)/i.test(clean)) {
-    amount_g = /½/.test(clean) ? 120 : /¼/.test(clean) ? 60 : 200;
-  } else if (/cucharadita|tsp/i.test(clean)) {
-    amount_g = 5;
-  } else if (/cucharada|tbsp/i.test(clean)) {
-    amount_g = 15;
-  } else if (/diente|dientes/i.test(clean)) {
-    const pMatch = clean.match(/(\d+)/);
-    const count = pMatch ? parseInt(pMatch[1], 10) : 1;
-    amount_g = count * 5;
-  } else if (/pollo/i.test(clean) && /1\s*pollo/i.test(clean)) {
-    amount_g = 1000;
-  } else if (/(\d+)\s*(?:pieza|piezas|unidad|unidades|huevo|huevos|manzana|plátano|papa|papas|cebolla|zanahoria)/i.test(clean)) {
-    const pMatch = clean.match(/(\d+)/);
-    const count = pMatch ? parseInt(pMatch[1], 10) : 1;
-    amount_g = count * 100;
-  }
-
-  // Limpiar nombre del ingrediente de medidas, números iniciales y puntuación
-  const cleanName = clean
-    .replace(/^[\d\s\/\.,\-\½\¼\¾\⅓\⅔]+/, '')
-    .replace(/^(?:unas?|unos?)\s+/i, '')
-    .replace(/^(?:g|gr|gramos|kilos?|kg|tazas?|cups?|cucharaditas?|cucharadas?|tbsp|tsp|piezas?|unidades?|latas?|dientes?|ramitas?|rebanadas?)\s*(?:chicos?|chicas?|grandes?|medianos?|medianas?)?\s*(?:de\s+)?/i, '')
-    .replace(/^de\s+/i, '')
-    .replace(/\.$/, '')
-    .trim() || clean;
-
-  // Estimar macros básicos según la proteína o ingrediente
-  const aisle = detectAisle(cleanName);
-  let calories = 100;
-  let protein_g = 3;
-  let carbs_g = 15;
-  let fat_g = 2;
-
-  if (aisle === 'Carnicería y Proteínas') {
-    protein_g = Number(((amount_g * 0.25)).toFixed(1));
-    carbs_g = 0;
-    fat_g = Number(((amount_g * 0.05)).toFixed(1));
-    calories = Math.round(protein_g * 4 + fat_g * 9);
-  } else if (aisle === 'Frutas y Verduras') {
-    protein_g = Number(((amount_g * 0.015)).toFixed(1));
-    carbs_g = Number(((amount_g * 0.08)).toFixed(1));
-    fat_g = 0.2;
-    calories = Math.round(carbs_g * 4 + protein_g * 4);
-  } else if (aisle === 'Abarrotes y Granos') {
-    protein_g = Number(((amount_g * 0.07)).toFixed(1));
-    carbs_g = Number(((amount_g * 0.28)).toFixed(1));
-    fat_g = Number(((amount_g * 0.02)).toFixed(1));
-    calories = Math.round(carbs_g * 4 + protein_g * 4 + fat_g * 9);
-  } else if (aisle === 'Lácteos y Refrigerados') {
-    protein_g = Number(((amount_g * 0.08)).toFixed(1));
-    carbs_g = Number(((amount_g * 0.05)).toFixed(1));
-    fat_g = Number(((amount_g * 0.04)).toFixed(1));
-    calories = Math.round(protein_g * 4 + carbs_g * 4 + fat_g * 9);
-  } else if (aisle === 'Condimentos y Aceites') {
-    if (/aceite|mantequilla|manteca/i.test(cleanName)) {
-      protein_g = 0;
-      carbs_g = 0;
-      fat_g = Number(((amount_g * 0.95)).toFixed(1));
-      calories = Math.round(fat_g * 9);
-    } else {
-      calories = 5;
-      protein_g = 0;
-      carbs_g = 1;
-      fat_g = 0;
-    }
-  }
-
-  return {
-    ingredient_name: cleanName,
-    amount_g: Math.max(5, amount_g),
-    calories: Math.max(5, calories),
-    protein_g,
-    carbs_g,
-    fat_g,
-    aisle_category: aisle,
-  };
+  return parseSmartIngredient(raw);
 }
 
 // Helper para extraer receta directamente desde el texto estructurado del HTML
@@ -362,13 +260,13 @@ export async function POST(req: Request) {
         success: true,
         source: 'schema_json_ld',
         data: {
-          name: title,
-          description: description.slice(0, 200),
+          name: translateRecipeTitle(title),
+          description: translateCulinaryText(description.slice(0, 200)),
           category: 'lunch',
           total_servings: Math.max(1, servings),
           prep_time_minutes: prepTime,
           cook_time_minutes: cookTime,
-          instructions: instructions.length > 0 ? instructions : ['1. Seguir las instrucciones de la receta original.'],
+          instructions: translateRecipeInstructions(instructions.length > 0 ? instructions : ['1. Seguir las instrucciones de la receta original.']),
           ingredients: ingredients.length > 0 ? ingredients : [
             {
               ingredient_name: 'Ingrediente principal de la receta',
@@ -396,13 +294,13 @@ export async function POST(req: Request) {
         success: true,
         source: 'html_heuristic_extractor',
         data: {
-          name: heuristic.title || 'Receta Importada',
+          name: translateRecipeTitle(heuristic.title || 'Receta Importada'),
           description: (heuristic.description || `Importada desde: ${url}`).slice(0, 200),
           category: 'lunch',
           total_servings: Math.max(1, heuristic.servings),
           prep_time_minutes: 20,
           cook_time_minutes: 30,
-          instructions,
+          instructions: translateRecipeInstructions(instructions),
           ingredients,
         },
       });

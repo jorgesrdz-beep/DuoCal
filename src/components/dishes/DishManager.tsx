@@ -13,6 +13,7 @@ import {
   X,
   Clock,
   Check,
+  CheckCircle2,
   ArrowRight,
   Eye,
   BookOpen,
@@ -25,6 +26,7 @@ import {
   Search,
   Package,
   Camera,
+  Globe,
 } from 'lucide-react';
 import { Dish, Food, MealType, FrequencyType } from '@/types/database';
 import NutritionFactLabel from '@/components/nutrition/NutritionFactLabel';
@@ -34,6 +36,11 @@ import BarcodeScannerModal from '@/components/scanner/BarcodeScannerModal';
 import { STARTER_RECIPES } from '@/lib/data/starterRecipes';
 import { getWeekStartDate, getNextWeekStartDate, getSmartMealPrepWeekStartDate, formatWeekDateRange, getLocalDateString } from '@/lib/utils';
 import { resolveIngredientFiber } from '@/lib/utils/fiberUtils';
+import {
+  translateCulinaryText,
+  translateRecipeTitle,
+  translateRecipeInstructions,
+} from '@/lib/utils/recipeTranslator';
 export function estimatePieceWeight(name: string): number {
   const n = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   if (n.includes('tomate') || n.includes('jitomate')) return 120; // 1 jitomate huaje/saladette mediano ≈ 120g
@@ -181,6 +188,8 @@ export default function DishManager() {
   const [scheduleMsg, setScheduleMsg] = useState<string | null>(null);
   const [isApplyingSchedule, setIsApplyingSchedule] = useState(false);
   const [scheduleSuccess, setScheduleSuccess] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isCloningId, setIsCloningId] = useState<string | null>(null);
 
   const handleOpenScheduleModal = (dish: Dish) => {
     setSelectedDishForSchedule(dish);
@@ -896,6 +905,29 @@ export default function DishManager() {
     setIngredients((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const handleUpdateIngredientName = (index: number, newName: string) => {
+    setIngredients((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], ingredient_name: newName };
+      return copy;
+    });
+  };
+
+  const handleTranslateAllRecipe = () => {
+    setDishName((prev) => translateRecipeTitle(prev));
+    setDishDescription((prev) => translateCulinaryText(prev));
+    if (instructionsText) {
+      const lines = instructionsText.split('\n');
+      setInstructionsText(translateRecipeInstructions(lines).join('\n'));
+    }
+    setIngredients((prev) =>
+      prev.map((ing) => ({
+        ...ing,
+        ingredient_name: translateCulinaryText(ing.ingredient_name),
+      }))
+    );
+  };
+
   // Cálculo en vivo de la receta en creación
   const previewTotalCals = ingredients.reduce((sum, i) => sum + i.calories, 0);
   const previewTotalProt = ingredients.reduce((sum, i) => sum + i.protein_g, 0);
@@ -1054,6 +1086,7 @@ export default function DishManager() {
   };
 
   const handleCloneTemplate = async (template: Dish, customServings?: number) => {
+    setIsCloningId(template.id);
     try {
       const portions = customServings || template.total_servings || 1;
       const res = await fetch('/api/dishes/templates', {
@@ -1066,24 +1099,23 @@ export default function DishManager() {
       });
 
       if (res.ok) {
-        const data = await res.json();
         await fetchDishes();
-        if (data.dish) {
-          setSelectedRecipeForModal(data.dish);
-        } else {
-          setSelectedRecipeForModal(null);
-        }
-        setActiveTab('my-dishes');
+        // Si el modal estaba abierto, lo cerramos; NO forzamos el modo cocina ni asignamos al calendario
+        setSelectedRecipeForModal(null);
+        setToastMessage(`✨ ¡"${template.name}" se guardó en Mis Platillos!`);
+        setTimeout(() => setToastMessage(null), 4000);
       } else {
         const data = await res.json();
         alert(`Error al clonar: ${data.error || 'No se pudo clonar la receta'}`);
       }
     } catch {
       // Ignorar
+    } finally {
+      setIsCloningId(null);
     }
   };
 
-  const handleCookFromLibrary = async (recipe: Dish) => {
+  const handleCookFromLibrary = async (recipe: Dish, customServings?: number) => {
     try {
       const existing = dishes.find(
         (d) => d.name.toLowerCase().trim() === recipe.name.toLowerCase().trim()
@@ -1094,13 +1126,14 @@ export default function DishManager() {
         return;
       }
 
-      // Si no existe aún en Mis Platillos, hacerla suya automáticamente clonándola
+      // Si no existe aún en Mis Platillos, la guardamos para tener registro local y poder cocinar
+      const portions = customServings || recipe.total_servings || 1;
       const res = await fetch('/api/dishes/templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           templateId: recipe.id,
-          servings: recipe.total_servings || 1,
+          servings: portions,
         }),
       });
 
@@ -1128,18 +1161,33 @@ export default function DishManager() {
     }
     if (data.ingredients && Array.isArray(data.ingredients)) {
       setIngredients(
-        data.ingredients.map((ing: any) => ({
-          food_id: null,
-          ingredient_name: ing.ingredient_name,
-          amount_g: ing.amount_g || 100,
-          calories: ing.calories || 100,
-          protein_g: ing.protein_g || 5,
-          carbs_g: ing.carbs_g || 10,
-          fat_g: ing.fat_g || 2,
-          fiber_g: 0,
-          sodium_mg: 0,
-          aisle_category: ing.aisle_category,
-        }))
+        data.ingredients.map((ing: any) => {
+          const amt = ing.amount_g || 100;
+          const factor = amt > 0 ? amt / 100 : 1;
+          const pieceWeight = estimatePieceWeight(ing.ingredient_name);
+          return {
+            food_id: null,
+            ingredient_name: ing.ingredient_name,
+            amount_g: amt,
+            unit: 'g' as const,
+            unit_quantity: amt,
+            piece_weight_g: pieceWeight,
+            calories: ing.calories || 100,
+            protein_g: ing.protein_g || 5,
+            carbs_g: ing.carbs_g || 10,
+            fat_g: ing.fat_g || 2,
+            fiber_g: ing.fiber_g || 0,
+            sodium_mg: ing.sodium_mg || 0,
+            aisle_category: ing.aisle_category,
+            base_100g: {
+              calories: Math.round((ing.calories || 100) / factor),
+              protein_g: Number(((ing.protein_g || 5) / factor).toFixed(1)),
+              carbs_g: Number(((ing.carbs_g || 10) / factor).toFixed(1)),
+              fat_g: Number(((ing.fat_g || 2) / factor).toFixed(1)),
+              fiber_g: Number(((ing.fiber_g || 0) / factor).toFixed(1)),
+            },
+          };
+        })
       );
     }
     setIsCreateOpen(true);
@@ -1911,7 +1959,7 @@ export default function DishManager() {
                 return (
                   <div
                     key={recipe.id}
-                    onClick={() => handleCookFromLibrary(recipe)}
+                    onClick={() => setSelectedRecipeForModal(recipe)}
                     className="bg-white dark:bg-zinc-900 rounded-3xl p-4 sm:p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm hover:border-emerald-500 transition cursor-pointer flex flex-col justify-between space-y-3"
                   >
                     <div>
@@ -1962,19 +2010,24 @@ export default function DishManager() {
                       </div>
 
                       <div className="flex items-center gap-2">
-                        {!isAlreadyInMyDishes && (
+                        {!isAlreadyInMyDishes ? (
                           <button
                             type="button"
+                            disabled={isCloningId === recipe.id}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleCloneTemplate(recipe);
                             }}
-                            className="text-[11px] bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 px-2.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer"
-                            title="Guardar en Mis Platillos sin abrir"
+                            className="text-[11px] bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 px-2.5 py-1.5 rounded-xl font-bold transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                            title="Guardar en Mis Platillos sin abrir modo cocinar"
                           >
-                            <Copy className="w-3 h-3" />
-                            <span>Clonar</span>
+                            <Copy className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            <span>{isCloningId === recipe.id ? 'Guardando...' : 'Clonar'}</span>
                           </button>
+                        ) : (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium px-2 py-1 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200/50 dark:border-emerald-800/50">
+                            ✓ Guardada
+                          </span>
                         )}
 
                         <button
@@ -1984,7 +2037,7 @@ export default function DishManager() {
                             handleCookFromLibrary(recipe);
                           }}
                           className="text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl font-bold transition flex items-center gap-1 shadow-xs active:scale-95 cursor-pointer"
-                          title="Cocinar (la agrega a Mis Platillos y abre el escalador)"
+                          title="Abrir receta en modo cocinar con escalador y preparación"
                         >
                           <ChefHat className="w-3.5 h-3.5" />
                           <span>Cocinar</span>
@@ -2010,6 +2063,7 @@ export default function DishManager() {
           }}
           onLogToday={handleLogPortionToday}
           onCloneTemplate={handleCloneTemplate}
+          onCookTemplate={handleCookFromLibrary}
           onEdit={(dish) => {
             setSelectedRecipeForModal(null);
             handleEditDish(dish);
@@ -2404,63 +2458,87 @@ export default function DishManager() {
                     </div>
 
                     {ingredients.length > 0 ? (
-                      <div className="max-h-[220px] overflow-y-auto overflow-x-hidden space-y-2 pr-1">
-                        {ingredients.map((ing, idx) => (
-                          <div
-                            key={idx}
-                            className="p-2.5 bg-zinc-50 dark:bg-zinc-800/80 rounded-2xl border border-zinc-200 dark:border-zinc-700 flex items-center justify-between text-xs"
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                            Ingredientes añadidos ({ingredients.length})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleTranslateAllRecipe}
+                            className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 flex items-center gap-1 hover:underline transition"
+                            title="Traducir automáticamente al español el título, ingredientes e instrucciones"
                           >
-                            <div className="flex-1 pr-2 min-w-0">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-semibold text-zinc-900 dark:text-white truncate" title={ing.ingredient_name}>
-                                  {ing.ingredient_name}
+                            <Globe className="w-3.5 h-3.5" />
+                            <span>Traducir al español</span>
+                          </button>
+                        </div>
+                        <div className="max-h-[220px] overflow-y-auto overflow-x-hidden space-y-2 pr-1">
+                          {ingredients.map((ing, idx) => (
+                            <div
+                              key={idx}
+                              className="p-2.5 bg-zinc-50 dark:bg-zinc-800/80 rounded-2xl border border-zinc-200 dark:border-zinc-700 flex items-center justify-between text-xs"
+                            >
+                              <div className="flex-1 pr-2 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <div className="flex items-center gap-1 flex-1 min-w-[140px] group/ing">
+                                    <input
+                                      type="text"
+                                      value={ing.ingredient_name}
+                                      onChange={(e) => handleUpdateIngredientName(idx, e.target.value)}
+                                      className="font-semibold text-zinc-900 dark:text-white bg-transparent border-b border-dashed border-zinc-300 dark:border-zinc-700 hover:border-emerald-500 focus:border-emerald-500 focus:bg-white dark:focus:bg-zinc-900 rounded px-1 -mx-1 py-0.5 outline-none transition w-full text-xs"
+                                      placeholder="Nombre del ingrediente"
+                                      title="Haz clic para cambiar o editar el nombre de este ingrediente"
+                                    />
+                                    <Pencil className="w-3 h-3 text-zinc-400 opacity-0 group-hover/ing:opacity-100 transition shrink-0 pointer-events-none" />
+                                  </div>
+                                  {ing.unit && ing.unit !== 'g' && (
+                                    <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/70 px-1.5 py-0.5 rounded-md shrink-0">
+                                      ≈ {ing.amount_g}g
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[11px] text-zinc-400 block mt-0.5">
+                                  {ing.calories} kcal • P: {ing.protein_g}g • C: {ing.carbs_g}g • G: {ing.fat_g}g
+                                  {(() => {
+                                    const fib = ing.fiber_g && ing.fiber_g > 0 ? ing.fiber_g : resolveIngredientFiber(ing, customFoods);
+                                    return fib > 0 ? ` • Fibra: ${fib}g` : '';
+                                  })()}
                                 </span>
-                                {ing.unit && ing.unit !== 'g' && (
-                                  <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/70 px-1.5 py-0.5 rounded-md">
-                                    ≈ {ing.amount_g}g
-                                  </span>
-                                )}
                               </div>
-                              <span className="text-[11px] text-zinc-400 block mt-0.5">
-                                {ing.calories} kcal • P: {ing.protein_g}g • C: {ing.carbs_g}g • G: {ing.fat_g}g
-                                {(() => {
-                                  const fib = ing.fiber_g && ing.fiber_g > 0 ? ing.fiber_g : resolveIngredientFiber(ing, customFoods);
-                                  return fib > 0 ? ` • Fibra: ${fib}g` : '';
-                                })()}
-                              </span>
-                            </div>
 
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <div className="flex items-center bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl px-2 py-1 shadow-xs focus-within:ring-2 focus-within:ring-emerald-500 focus-within:border-emerald-500 transition">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="any"
-                                  value={ing.unit_quantity !== undefined ? ing.unit_quantity : (ing.unit === 'kg' ? Number((ing.amount_g / 1000).toFixed(2)) : ing.amount_g)}
-                                  onChange={(e) => handleUpdateIngredientQuantity(idx, e.target.value === '' ? 0 : Number(e.target.value))}
-                                  className="w-16 bg-transparent text-right font-bold text-xs text-zinc-900 dark:text-white outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                />
-                                <select
-                                  value={ing.unit || 'g'}
-                                  onChange={(e) => handleUpdateIngredientUnit(idx, e.target.value as 'g' | 'kg' | 'pza')}
-                                  className="bg-transparent text-zinc-600 dark:text-zinc-300 text-xs font-semibold ml-1 cursor-pointer outline-none border-l border-zinc-200 dark:border-zinc-700 pl-1 py-0.5 hover:text-emerald-600 dark:hover:text-emerald-400"
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <div className="flex items-center bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl px-2 py-1 shadow-xs focus-within:ring-2 focus-within:ring-emerald-500 focus-within:border-emerald-500 transition">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={ing.unit_quantity !== undefined ? ing.unit_quantity : (ing.unit === 'kg' ? Number((ing.amount_g / 1000).toFixed(2)) : ing.amount_g)}
+                                    onChange={(e) => handleUpdateIngredientQuantity(idx, e.target.value === '' ? 0 : Number(e.target.value))}
+                                    className="w-16 bg-transparent text-right font-bold text-xs text-zinc-900 dark:text-white outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  />
+                                  <select
+                                    value={ing.unit || 'g'}
+                                    onChange={(e) => handleUpdateIngredientUnit(idx, e.target.value as 'g' | 'kg' | 'pza')}
+                                    className="bg-transparent text-zinc-600 dark:text-zinc-300 text-xs font-semibold ml-1 cursor-pointer outline-none border-l border-zinc-200 dark:border-zinc-700 pl-1 py-0.5 hover:text-emerald-600 dark:hover:text-emerald-400"
+                                  >
+                                    <option value="g" className="dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100">g</option>
+                                    <option value="kg" className="dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100">kg</option>
+                                    <option value="pza" className="dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100">pza</option>
+                                  </select>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveIngredient(idx)}
+                                  className="text-zinc-400 hover:text-red-500 p-1.5 transition rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700/50"
+                                  title="Quitar ingrediente"
                                 >
-                                  <option value="g" className="dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100">g</option>
-                                  <option value="kg" className="dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100">kg</option>
-                                  <option value="pza" className="dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100">pza</option>
-                                </select>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveIngredient(idx)}
-                                className="text-zinc-400 hover:text-red-500 p-1.5 transition rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700/50"
-                                title="Quitar ingrediente"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
                     ) : (
                       <div className="p-4 border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-2xl text-center text-xs text-zinc-400">
@@ -3130,6 +3208,23 @@ export default function DishManager() {
           setIsBarcodeScannerOpen(false);
         }}
       />
+
+      {/* TOAST DE NOTIFICACIÓN FLOTANTE */}
+      {toastMessage && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-zinc-900/95 text-white dark:bg-white dark:text-zinc-900 px-4 py-2.5 rounded-2xl text-xs font-bold shadow-xl border border-zinc-700 dark:border-zinc-200 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+          <span>{toastMessage}</span>
+          <button
+            onClick={() => {
+              setActiveTab('my-dishes');
+              setToastMessage(null);
+            }}
+            className="ml-2 text-emerald-400 dark:text-emerald-600 underline font-semibold hover:opacity-80 cursor-pointer"
+          >
+            Ver mis platillos
+          </button>
+        </div>
+      )}
     </div>
   );
 }
