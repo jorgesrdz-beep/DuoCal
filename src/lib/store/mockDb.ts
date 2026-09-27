@@ -74,30 +74,10 @@ export async function getDb(): Promise<InMemoryDB> {
         }
       }
 
-      const mergedDishes: Dish[] = [...STARTER_RECIPES];
-      if (dishes && Array.isArray(dishes)) {
-        for (const d of dishes) {
-          const idx = mergedDishes.findIndex(
-            (md) => md.id === d.id || md.name.toLowerCase().trim() === d.name.toLowerCase().trim()
-          );
-          if (idx !== -1) {
-            mergedDishes[idx] = {
-              ...mergedDishes[idx],
-              ...d,
-            };
-          } else {
-            mergedDishes.push(d);
-          }
-        }
-      }
-
-      const hydratedDishes = mergedDishes.map((d) => {
-        const liveIngredients = (dish_ingredients || []).filter((di) => di.dish_id === d.id);
-        return {
-          ...d,
-          ingredients: liveIngredients.length > 0 ? liveIngredients : (d.ingredients || []),
-        };
-      });
+      const hydratedDishes = (dishes || []).map((d) => ({
+        ...d,
+        ingredients: (dish_ingredients || []).filter((di) => di.dish_id === d.id),
+      }));
 
       let liveWaterLogs: WaterLog[] = [];
       try {
