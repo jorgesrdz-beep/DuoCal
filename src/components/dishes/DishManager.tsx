@@ -36,6 +36,7 @@ import BarcodeScannerModal from '@/components/scanner/BarcodeScannerModal';
 import { STARTER_RECIPES } from '@/lib/data/starterRecipes';
 import { getWeekStartDate, getNextWeekStartDate, getSmartMealPrepWeekStartDate, formatWeekDateRange, getLocalDateString } from '@/lib/utils';
 import { resolveIngredientFiber } from '@/lib/utils/fiberUtils';
+import { calculateFuzzyScore } from '@/lib/utils/fuzzySearch';
 import {
   translateCulinaryText,
   translateRecipeTitle,
@@ -334,12 +335,11 @@ export default function DishManager() {
 
       // Filtro por texto
       if (!pantrySearchQuery.trim()) return true;
-      const q = pantrySearchQuery.toLowerCase().trim();
-      return (
-        f.name.toLowerCase().includes(q) ||
-        (f.brand && f.brand.toLowerCase().includes(q)) ||
-        (f.barcode && f.barcode === q)
-      );
+      const q = pantrySearchQuery.trim();
+      const nameScore = calculateFuzzyScore(f.name, q);
+      const brandScore = f.brand ? calculateFuzzyScore(f.brand, q) : { matches: false, score: 0 };
+      const barcodeMatch = f.barcode && f.barcode === q;
+      return nameScore.matches || brandScore.matches || Boolean(barcodeMatch);
     });
   }, [customFoods, pantrySearchQuery, pantryCategoryFilter]);
 
@@ -361,11 +361,14 @@ export default function DishManager() {
 
   const matchesDishSearch = (d: Dish, query: string): boolean => {
     if (!query.trim()) return true;
-    const q = query.toLowerCase().trim();
-    if (d.name?.toLowerCase().includes(q)) return true;
-    if (d.description?.toLowerCase().includes(q)) return true;
+    const nameScore = calculateFuzzyScore(d.name, query);
+    if (nameScore.matches) return true;
+    if (d.description) {
+      const descScore = calculateFuzzyScore(d.description, query);
+      if (descScore.matches) return true;
+    }
     if (d.ingredients && Array.isArray(d.ingredients)) {
-      if (d.ingredients.some((ing) => ing.ingredient_name?.toLowerCase().includes(q))) {
+      if (d.ingredients.some((ing) => calculateFuzzyScore(ing.ingredient_name, query).matches)) {
         return true;
       }
     }

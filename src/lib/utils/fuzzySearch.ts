@@ -55,6 +55,27 @@ export interface FuzzyMatchResult {
   matchedField?: string;
 }
 
+const SYNONYMS_MAP: Record<string, string[]> = {
+  sandi: ['sandwich'],
+  sandis: ['sandwich'],
+  sanduche: ['sandwich'],
+  sandwiches: ['sandwich'],
+  sanguche: ['sandwich'],
+  sanguchito: ['sandwich'],
+  sandwish: ['sandwich'],
+  sanwich: ['sandwich'],
+  jitomate: ['tomate'],
+  tomate: ['jitomate'],
+  aguacate: ['palta'],
+  palta: ['aguacate'],
+  fresa: ['frutilla'],
+  frutilla: ['fresa'],
+  platano: ['banana', 'cambur'],
+  banana: ['platano'],
+  frijol: ['frijoles'],
+  frijoles: ['frijol'],
+};
+
 /**
  * Evalúa si una palabra del query coincide con una palabra del candidato.
  */
@@ -66,7 +87,7 @@ function matchSingleToken(queryToken: string, candidateWord: string): { match: b
     return { match: true, score: 100 };
   }
 
-  // 2. Prefijo exacto (ej. "manz" -> "manzana")
+  // 2. Prefijo exacto (ej. "manz" -> "manzana", "sand" -> "sandwich")
   if (candidateWord.startsWith(queryToken)) {
     // Si el query tiene al menos 3 caracteres
     if (queryToken.length >= 3) {
@@ -108,6 +129,23 @@ function matchSingleToken(queryToken: string, candidateWord: string): { match: b
   return { match: false, score: 0 };
 }
 
+function matchSingleTokenWithSynonyms(queryToken: string, candidateWord: string): { match: boolean; score: number } {
+  const direct = matchSingleToken(queryToken, candidateWord);
+  if (direct.match) return direct;
+
+  const syns = SYNONYMS_MAP[queryToken];
+  if (syns && syns.length > 0) {
+    for (const syn of syns) {
+      const synMatch = matchSingleToken(syn, candidateWord);
+      if (synMatch.match) {
+        return { match: true, score: Math.round(synMatch.score * 0.95) };
+      }
+    }
+  }
+
+  return { match: false, score: 0 };
+}
+
 /**
  * Evalúa la similitud global entre un texto candidato y la consulta del usuario.
  */
@@ -129,12 +167,15 @@ export function calculateFuzzyScore(candidateText: string, rawQuery: string): Fu
     return { matches: true, score: 160 };
   }
 
-  // Contiene la frase completa
+  // Contiene la frase completa (ej. "sand" dentro de "sandwich de pavo")
   if (normCand.includes(normQuery)) {
     return { matches: true, score: 130 };
   }
 
-  const queryTokens = normQuery.split(/\s+/).filter(Boolean);
+  const STOP_WORDS = new Set(['de', 'con', 'y', 'en', 'el', 'la', 'los', 'las', 'un', 'una', 'al', 'del', 'para']);
+  const allTokens = normQuery.split(/\s+/).filter(Boolean);
+  const nonStopTokens = allTokens.filter((t) => !STOP_WORDS.has(t));
+  const queryTokens = nonStopTokens.length > 0 ? nonStopTokens : allTokens;
   const candWords = normCand.split(/\s+/).filter(Boolean);
 
   if (queryTokens.length === 0) {
@@ -149,7 +190,7 @@ export function calculateFuzzyScore(candidateText: string, rawQuery: string): Fu
     let foundMatch = false;
 
     for (const cWord of candWords) {
-      const res = matchSingleToken(qToken, cWord);
+      const res = matchSingleTokenWithSynonyms(qToken, cWord);
       if (res.match && res.score > bestTokenScore) {
         bestTokenScore = res.score;
         foundMatch = true;
