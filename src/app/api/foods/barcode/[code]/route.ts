@@ -21,6 +21,19 @@ export async function GET(
 
     // 1. Buscar primero en base de datos local
     const candidateCodes = [cleanCode];
+
+    // Manejo inteligente de ceros a la izquierda (formato Walmart GTIN-14 o zero-padding EAN/UPC)
+    if (cleanCode.startsWith('00') && cleanCode.length === 14) {
+      candidateCodes.push(cleanCode.slice(2)); // 12 dígitos UPC
+      candidateCodes.push(cleanCode.slice(1)); // 13 dígitos EAN
+    } else if (cleanCode.startsWith('0') && cleanCode.length === 13) {
+      candidateCodes.push(cleanCode.slice(1)); // 12 dígitos
+      candidateCodes.push('0' + cleanCode);    // 14 dígitos
+    } else if (cleanCode.length === 12 && /^\d+$/.test(cleanCode)) {
+      candidateCodes.push('0' + cleanCode);    // 13 dígitos
+      candidateCodes.push('00' + cleanCode);   // 14 dígitos
+    }
+
     if (cleanCode.length === 12 && /^\d+$/.test(cleanCode)) {
       let sum = 0;
       for (let i = 0; i < 12; i++) {
